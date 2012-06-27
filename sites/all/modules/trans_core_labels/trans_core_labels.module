@@ -1,0 +1,8 @@
+<?php
+
+function trans_core_labels_form_alter(&$form, $form_state, $form_id) {
+  if (stristr($form_id, 'node_form')) {
+    $form['title']['#title'] = t($form['title']['#title']);
+    $form['body_field']['body']['#title'] = t($form['body_field']['body']['#title']);
+  }
+}

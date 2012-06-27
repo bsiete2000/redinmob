@@ -1,0 +1,11 @@
+name = Redinmob Solr search
+description = Redinmob Search with Solr. The functionality of this module overlaps the one provided
+by apachesolr_search, in the sense that accessing search links will bring you to this
+module, not to apachesolr_search
+
+dependencies[] = search
+dependencies[] = apachesolr
+dependencies[] = apachesolr_search
+
+package = RedInmobiliaria
+core = "6.x"

@@ -1,0 +1,10 @@
+; $Id:  $
+name = Propiedad Form Alters
+description = Alterations to the Propiedad form, to adjust to diverse scenarios
+
+dependencies[] = fsv2form
+dependencies[] = tabs
+dependencies[] = fb_social_like
+
+package = RedInmobiliaria
+core = "6.x"

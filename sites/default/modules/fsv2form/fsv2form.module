@@ -1,0 +1,130 @@
+<?php
+// $Id: $
+
+/**
+ * Main Recursive function used to pass the values stored in a form_state['values'] array 
+ * to a form, correctly handling cck fields.
+ * For correct CCK fields handling, you have to implement the hook_fsv2form or
+ * hook_fsv2form_FIELD_NAME (to do a match per field name)
+ *
+ * @param $elements The form or elements to affect
+ * @param $values The form_state['values'] array
+ * @param private $parents Array of keys that represent the current element key (as the last)
+ * key of this array) plus all its hierarchy (the oldest first)
+ * @param private $tree Flag to indicate that this field value is stored using as name all
+ * its hierarchy 
+ * @param private $is_cck Flag that indicated that the current treated field is a CCK one
+ * 
+ */
+function _fsv2form(&$elements, $values, $parents = array(), $tree = FALSE, $is_cck = FALSE) { 
+  // Element types to be ignored
+  static $ignore_types = array('value', 'submit', 'markup');
+    
+  // Here the values from $values are set into the elements. 
+  // This is particullarly important when dealing with cck fields, because those
+  // fields used to be validated in a previous phase, not just in the 'validate' step
+  // of the form_execute_handlers function.
+  foreach (element_children($elements) as $key) {
+    // Ignore elements of the indicated types
+    if(isset($elements[$key]['#type']) && in_array($elements[$key]['#type'], $ignore_types)){
+      continue;
+    }
+    
+    // Reset the $parents array as indicated by the tree flag
+    if(!$tree){
+      $parents = array();
+    }
+    
+    // Update the tree flag and parents array
+    if($tree = $elements[$key]['#tree']){
+      array_push($parents, $key);
+    } else {
+      $parents = array($key);
+    }
+    
+    // Set the flag for a CCK field
+    if(!$is_cck){
+      $is_cck = preg_match('/^field_/', $key);
+    }
+
+    // Assign a default value to the field
+    if(!$tree){
+      // TREE is not active in the form element
+      if(isset($values[$key])) {
+        if(!$is_cck){
+          $elements[$key]['#default_value'] = $values[$key];
+        } else {
+          // Call the hooks implementations all around the site
+          _fsv2form_call_hooks($elements[$key], $values[$key], $parents);
+        }
+      }
+    } else {
+      // TREE is active in the form element
+      $value = $values;
+      
+      foreach ($parents as $item) {
+        $value = $value[$item];
+      }
+      
+      // Set the value just to enabled item
+      $custom_ignore_types = $ignore_types;
+      array_push($custom_ignore_types, 'fieldset');
+      
+      if(isset($elements[$key]['#type']) && !in_array($elements[$key]['#type'], $custom_ignore_types)){
+        if(!$is_cck){
+          $elements[$key]['#default_value'] = $value;
+        } else {
+          // Call the hooks implementations all around the site
+          _fsv2form_call_hooks($elements[$key], $value, $parents);
+        }
+      }
+    }
+    
+    // Do a recursive call
+    _fsv2form($elements[$key], $values, $parents, $tree, $is_cck);
+    
+    // Reset the parents array
+    $parents = array();
+
+    // Reset the value of the is_cck flag
+    $is_cck = false;
+  }  
+}
+
+/**
+ * Function used to call the implementations of the hook_fsv2form and 
+ * hook_fsv2form_FIELD_NAME
+ *
+ * @param $elements Form element to be modified
+ * @param $value Value extracted form_state['values'] to apply to the form element
+ * @param $keys Arrays of key items used to find the correct value in the $values 
+ * array
+ */
+function _fsv2form_call_hooks(&$elements, $value, $keys){
+  // Definition of the main part of the hooks names
+  static $hookSignature = 'fsv2form';
+  
+  // Name of modules that implement the hook_fsv2form
+  static $module_list;
+  $module_list = module_implements($hookSignature);
+  
+  // Get the field name
+  $field_name = $keys[0];
+  
+  // Loops through all the modules that implement the hook_fsv2form
+  foreach ($module_list as $module) {
+    // Call to hook_fsv2form implementations
+    $function = $module . '_' . $hookSignature;
+    $function($elements, $value, $keys, $field_name);
+  }
+  
+  // Loops through all the modules that implement the hook_fsv2form_FIELD_NAME
+  if(!is_null($field_name)){
+    $module_list2 = module_implements($hookSignature . '_' . $field_name);
+
+    foreach ($module_list2 as $module2) {
+      $function = $module . '_' . $hookSignature . '_' . $field_name;
+      $function($elements, $value, $keys);
+    }
+  }
+}

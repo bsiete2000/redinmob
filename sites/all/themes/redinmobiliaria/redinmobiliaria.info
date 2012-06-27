@@ -1,0 +1,55 @@
+core = "6.x"
+description = "RedInmobiliaria Theme (code taken from Tao theme, not subthemed. Mainly to avoid the <a href='http://drupal.org/node/279573#comment-2736592'><em>.tpl.php overriding bug in Drupal 6</em><a/>)"
+engine = "phptemplate"
+name = "Red Inmobiliaria"
+regions[left] = "Left sidebar"
+regions[right] = "Right sidebar"
+regions[content] = "Content"
+regions[header_top] = "Header Top"
+regions[header] = "Header"
+regions[footer] = "Footer"
+scripts[] = "js/jquery-1.5.2.min.js"
+scripts[] = "js/redinmobiliaria.js"
+scripts[] = "js/uniform-redinmobiliaria/jquery.uniform.js"
+
+stylesheets[screen][] = "reset.css"
+stylesheets[screen][] = "drupal.css"
+stylesheets[screen][] = "base.css"
+stylesheets[screen][] = "js/uniform-redinmobiliaria/css/uniform.default.css"
+stylesheets[screen][] = "css/styles.css"
+stylesheets[screen][] = "css/stylesheet.css"
+stylesheets[print][] = "reset.css"
+stylesheets[print][] = "base.css"
+stylesheets[print][] = "print.css"
+
+; Omit core stylesheets.
+; Note that several stylesheets are left included because of their non-invasive
+; or isolated nature:
+;
+;   color/color.css
+;   locale/locale.css
+;
+; Other functionally critical styles should be reimplemented in `drupal.css`
+; without styles that compromise the typographical grid or otherwise complicate
+; subtheming.
+
+stylesheets[all][] = "admin.css"
+stylesheets[all][] = "block.css"
+stylesheets[all][] = "book.css"
+stylesheets[all][] = "comment.css"
+stylesheets[all][] = "dblog.css"
+stylesheets[all][] = "defaults.css"
+stylesheets[all][] = "forum.css"
+stylesheets[all][] = "help.css"
+stylesheets[all][] = "maintenance.css"
+stylesheets[all][] = "node.css"
+stylesheets[all][] = "openid.css"
+stylesheets[all][] = "poll.css"
+stylesheets[all][] = "profile.css"
+stylesheets[all][] = "search.css"
+stylesheets[all][] = "system.css"
+stylesheets[all][] = "system-menus.css"
+stylesheets[all][] = "taxonomy.css"
+stylesheets[all][] = "tracker.css"
+stylesheets[all][] = "update.css"
+stylesheets[all][] = "user.css"

@@ -1,0 +1,42 @@
+<?php
+// $Id: $
+
+/**
+ * Implementation of hook_menu_alter
+ */
+function private_messages_alters_menu_alter(&$items){
+  // Change the menu types of some items, to hide them to appear as local tasks
+  $items['messages']['type'] = MENU_CALLBACK;
+  $items['messages/list']['type'] = MENU_CALLBACK;
+  $items['messages/view/%privatemsg_thread']['type'] = MENU_CALLBACK;
+  $items['messages/new']['type'] = MENU_CALLBACK;
+}
+
+/**
+ * Implementation of hook_form_FORM_ID_alter 
+ */
+function private_messages_alters_form_alter(&$form, &$form_state, $form_id){
+  if(strpos($form_id, 'views_bulk_operations_form') !== 0) {
+    return;
+  }  
+  
+  // Add a css to correct some stuff
+  $path = drupal_get_path('module', 'private_messages_alters');
+  drupal_add_css($path . '/styles/fix-selector.css');
+  
+  // Add a post_render function
+  $form['#after_build'][] = 'carajotote';
+  
+}
+
+function carajote($form){
+  $form['#after_build'][] = 'carajotote';
+//  dpm(func_get_args());
+  return $form;
+}
+
+function carajotote($form, $form_state){
+  $a = 0;
+  return $form;
+  
+}

@@ -1,0 +1,8 @@
+; $Id:  $
+name = Redinmob Units
+description = Units to be used in the whole site
+
+dependencies[] = mvf
+
+package = RedInmobiliaria
+core = "6.x"

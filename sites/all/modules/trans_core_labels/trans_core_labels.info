@@ -1,0 +1,9 @@
+name = Translate Core Labels
+description = Translate the "Body" and "Title" labels on node forms
+core = 6.x
+; Information added by drupal.org packaging script on 2010-11-12
+version = "6.x-1.x-dev"
+core = "6.x"
+project = "trans_core_labels"
+datestamp = "1289564574"
+

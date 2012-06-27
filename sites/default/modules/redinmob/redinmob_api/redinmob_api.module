@@ -1,0 +1,486 @@
+<?php
+// $Id: $
+
+/**
+ * Implementation of hook_imagecache_default_presets(). 
+ */
+function redinmob_api_imagecache_default_presets(){
+  $presets['user_picture'] = array (
+    'presetname' => 'user_picture',
+    'actions' => 
+    array (
+      0 => 
+      array (
+        'weight' => '0',
+        'module' => 'imagecache',
+        'action' => 'imagecache_scale_and_crop',
+        'data' => 
+        array (
+          'width' => '217',
+          'height' => '161',
+        ),
+      ),
+    ),
+  );  
+  
+  return $presets;
+}
+
+/**
+ * Implementation of hook_form_FORM_ID_alter
+ */
+function redinmob_api_form_views_exposed_form_alter(&$form, $form_state){
+  // Work only on desired views
+  if($form['#parameters'][1] && $form['#parameters'][1]['view']->name == 'Propiedades'){
+    // Change some items to make them translatables
+    $form['field_finalidad_value_many_to_one']['#options']['All'] = t('- Any -');
+    $form['field_tipo_propiedad_value']['#options']['All'] = t('- Any -');
+    $form['field_ciudad_sector_value']['#options']['All'] = t('- Any -');
+
+    // Correct the #action of the form, as some views are being used as panes. Leaving
+    // the default behavior, display the results in incorrect places
+    $form['#action'] = '/' . implode('/', arg());
+    
+    // Add custom js behavior to launch the form submit on filter selection
+    drupal_add_js(drupal_get_path('module', 'redinmob_api') . '/js/views-exposed-form-propiedades.js');
+  }
+} 
+
+/**
+ * Implementation of hook_menu 
+ */
+function redinmob_api_menu(){
+  $items = array();
+  
+  $items['node/%node/pause'] = array(
+    'title' => 'Pause',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('redinmob_api_node_pause_confirm', 1),
+    'access callback' => 'node_access',
+    'access arguments' => array('delete', 1),
+    'weight' => 1,
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['node/%node/unpause'] = array(
+    'title' => 'Unpause',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('redinmob_api_node_unpause_confirm', 1),
+    'access callback' => 'node_access',
+    'access arguments' => array('delete', 1),
+    'weight' => 1,
+    'type' => MENU_CALLBACK,
+  );
+  
+  return $items;  
+}
+
+/**
+ * Menu callback -- ask for confirmation of node unpublish operation
+ */
+function redinmob_api_node_pause_confirm(&$form_state, $node) {
+  $form['nid'] = array(
+    '#type' => 'value',
+    '#value' => $node->nid,
+  );
+
+  return confirm_form($form,
+    t('Are you sure you want to pause %title?', array('%title' => $node->title)),
+    isset($_GET['destination']) ? $_GET['destination'] : 'node/'. $node->nid,
+    '',
+    t('Pause'),
+    t('Cancel')
+  );
+}
+
+/**
+ * Execute node pause
+ */
+function redinmob_api_node_pause_confirm_submit($form, &$form_state) {
+  if ($form_state['values']['confirm']) {
+    db_query('UPDATE {node} n SET n.status = 0 WHERE n.nid = %d', $form_state['values']['nid']);
+  }
+
+  $form_state['redirect'] = '<front>';
+}
+
+/**
+ * Menu callback -- ask for confirmation of node publish operation
+ */
+function redinmob_api_node_unpause_confirm(&$form_state, $node) {
+  $form['nid'] = array(
+    '#type' => 'value',
+    '#value' => $node->nid,
+  );
+
+  return confirm_form($form,
+    t('Are you sure you want to reactivate %title?', array('%title' => $node->title)),
+    isset($_GET['destination']) ? $_GET['destination'] : 'node/'. $node->nid,
+    '',
+    t('Reactivate'),
+    t('Cancel')
+  );
+}
+
+/**
+ * Execute node unpause
+ */
+function redinmob_api_node_unpause_confirm_submit($form, &$form_state) {
+  if ($form_state['values']['confirm']) {
+    db_query('UPDATE {node} n SET n.status = 1 WHERE n.nid = %d', $form_state['values']['nid']);
+  }
+
+  $form_state['redirect'] = '<front>';
+}
+
+/**
+ * Function to calculate the value of the field 'codigo'.
+ */
+function computed_field_field_codigo_compute(&$node, $field, &$node_field){
+  $node_field[0]['value'] = $node->nid;
+}
+
+/////////////
+// HELPERS //
+/////////////
+/**
+ * Function used to create a recursive union (+ operator), of two or more arrays
+ * The order of passed items is preserved as in the + operator, the letmost is
+ * preserved over the rigthmost
+ * 
+ * @return An array with the result of the union, or an empty array if no union
+ * could be made
+ */
+function _redinmob_api_array_union_recursive() { 
+  $array_output = array();
+  
+  foreach (func_get_args() as $array) {
+    if(!is_array($array)){
+      continue;
+    }
+    
+    $do_recursive = !empty($array_output);
+    $array_output += $array;
+    
+    if($do_recursive){
+      foreach ($array_output as $k1 => &$v1) {
+        if(is_array($v1) && isset($array[$k1]) && is_array($array[$k1])){
+          $v1 = _redinmob_api_array_union_recursive($v1, $array[$k1]);
+        }
+      }
+    }
+  }
+  
+  return $array_output;
+}  
+
+///**
+// * Implementation of hook_theme
+// */
+//function redinmob_api_theme($existing, $type, $theme, $path) {
+//  $items['redinmob_api_user_picture'] = array(
+//    'arguments' => array(
+//      'account' => NULL,
+//      'imagecache_preset_name' => '',
+//    ),
+//  );
+//      
+//  return $items;
+//}
+// 
+///*
+// * Function to get the user picture as a link, correctly modified using imagecache
+// * presets, and with fallbacks in case the user has not image
+// *
+// * @param object $account User object of the user to extract picture info
+// * @param string $imagecache_preset_name Name of the imagecache preset to used to
+// * format the user picture
+// * @return string The html generated for the user picture
+// */
+//function theme_redinmob_api_user_picture($account = NULL, $imagecache_preset_name = ''){
+//  $output = '';
+//  
+//  if($account && !is_object($account)){
+//    return $output;
+//  }
+//  
+//  // Load the account of the user to be treated if not received anything at all
+//  if(!$account){
+//    global $user;
+//    
+//    $account = $user;
+//  }
+//  
+//  // Use the imagecache preset only if the module is installed and enabled, and the
+//  // imagecache preset name exists
+//  if(module_exists('imagecache')) {
+//    $preset = imagecache_preset_by_name($imagecache_preset_name);
+//    
+//    if(empty($preset)){
+//      $imagecache_preset_name = '';
+//    }
+//  }  
+//  
+//  // Load the user picture, or a default image if one could not be set
+//  $pic = $account->picture;
+//  
+//  if(!$pic){
+//    
+//  }  
+//  // The user has an image
+//  if($pic = $account->picture){
+//    // Load the user picture
+//    if($imagecache_preset_name){
+//      
+//    } else {
+//      
+//    }
+//  } else {
+//    // Load a default image for the user, depending of user's gender
+//    
+//  }
+//  
+//  return $output;
+//}
+
+/** 
+ * Helper function used to return a datestamp value into a string of characters 
+ */
+function _redinmob_api_get_date_in_text($datestamp) {
+  $text = '';
+
+  if (empty($datestamp)) {
+    return $text;
+  }
+
+  // Get the datestamp for this exact moment
+  $now = time();
+
+  // Calculete the number of days in the range
+  $days = intval(($now - $datestamp) / 86400);
+
+  // Displays the correct text accordingly
+  switch ($days) {
+    case 0:
+      $difference = $now - $datestamp;
+      $periods = array("second", "minute", "hour", "day", "week", "month", "year", "decade");
+      $lengths = array("60", "60", "24", "7", "4.35", "12", "10");
+
+      for ($j = 0; $difference >= $lengths[$j]; $j++) {
+        $difference /= $lengths[$j];
+      }
+
+      $difference = round($difference);
+
+      if ($difference != 1) {
+        $periods[$j].= "s";
+      }
+
+      $difference = _redinmob_api_num2words($difference);
+      $text = t('@number @part ago', array('@number' => $difference, '@part' => t($periods[$j])));
+
+      break;
+    case 1:
+      $text = t("Yesterday");
+
+      break;
+    case ($days >= 2 && $days <= 6):
+      $text = t('@days days ago', array('@days' => _redinmob_api_num2words($days)));
+
+      break;
+    case ($days >= 7 && $days < 14):
+      $text = t('One week ago');
+
+      break;
+    case ($days >= 14 && $days <= 365):
+      $text = t("@number weeks ago", array('@number' => _redinmob_api_num2words(intval($days / 7))));
+
+      break;
+    default :
+      $text = date("m-d-Y", $datestamp);
+  }
+
+  // Return the built text, after doing capitalizing it
+  return substr_replace($text, strtoupper(substr($text, 0, 1)), 0, 1);
+}
+
+/**
+ * Helper function used to convert number values into words
+ */
+function _redinmob_api_num2words($num) {
+  $ones = array(
+      0 => "",
+      1 => "one",
+      2 => "two",
+      3 => "three",
+      4 => "four",
+      5 => "five",
+      6 => "six",
+      7 => "seven",
+      8 => "eight",
+      9 => "nine",
+      10 => "ten",
+      11 => "eleven",
+      12 => "twelve",
+      13 => "thirteen",
+      14 => "fourteen",
+      15 => "fifteen",
+      16 => "sixteen",
+      17 => "seventeen",
+      18 => "eighteen",
+      19 => "nineteen"
+  );
+
+  $tens = array(
+      2 => "twenty",
+      3 => "thirty",
+      4 => "forty",
+      5 => "fifty",
+      6 => "sixty",
+      7 => "seventy",
+      8 => "eighty",
+      9 => "ninety"
+  );
+
+  $hundreds = array(
+      "hundred",
+      "thousand",
+      "million",
+      "billion",
+      "trillion",
+      "quadrillion"
+  ); //limit t quadrillion
+
+  $num = number_format($num, 2, ".", ",");
+  $num_arr = explode(".", $num);
+  $wholenum = $num_arr[0];
+  $decnum = $num_arr[1];
+  $whole_arr = array_reverse(explode(",", $wholenum));
+  krsort($whole_arr);
+
+  $rettxt = "";
+
+  foreach ($whole_arr as $key => $i) {
+    if ($i < 20) {
+      $rettxt .= $ones[$i];
+    } elseif ($i < 100) {
+      $rettxt .= $tens[substr($i, 0, 1)];
+      $rettxt .= " " . $ones[substr($i, 1, 1)];
+    } else {
+      $rettxt .= $ones[substr($i, 0, 1)] . " " . $hundreds[0];
+      $rettxt .= " " . $tens[substr($i, 1, 1)];
+      $rettxt .= " " . $ones[substr($i, 2, 1)];
+    }
+    if ($key > 0) {
+      $rettxt .= " " . $hundreds[$key] . " ";
+    }
+  }
+
+  if ($decnum > 0) {
+    $rettxt .= " and ";
+    if ($decnum < 20) {
+      $rettxt .= $ones[$decnum];
+    } elseif ($decnum < 100) {
+      $rettxt .= $tens[substr($decnum, 0, 1)];
+      $rettxt .= " " . $ones[substr($decnum, 1, 1)];
+    }
+  }
+
+  return t($rettxt);
+}
+
+/**
+ * Implementation of hook_user 
+ */
+function redinmob_api_user($op, &$edit, &$account, $category = NULL){
+  switch ($op) {
+    case 'login':
+      // Add a photo in case the user doesn't have one set
+//      if(true){
+//        _redinmob_api_upload_user_photo($account);
+//      }
+//      $a = 0;
+      
+      break;
+  }
+}
+
+/**
+ * Helper function used in the process of upload a user photo 
+ */
+function _redinmob_api_upload_user_photo($account = NULL){
+  if(is_null($account)){
+    global $user;
+    
+    $account = $user;
+  }
+  
+  // Fully qualified filename of the file you want to upload. Relative filenames 
+  // may not work.
+  $path = drupal_get_path('theme', 'redinmobiliaria');
+  $filename = $path . '/images/';
+  $filename = realpath($filename);
+  
+  // Chooses the file depending on the user role
+  if(in_array("agente inmobiliario", $account->roles)){
+    $filename .= '/anonymous-user.jpg';
+  } elseif(in_array("inmobiliaria", $account->roles)){
+    $filename .= '/anonymous-user.jpg';
+  } elseif(in_array("constructora", $account->roles)){
+    $filename .= '/anonymous-user.jpg';
+  }
+
+  // The page that processes the upload. You can usually find this in the 
+  // "ACTION" field of the HTML form
+  $path = drupal_get_path('module', 'redinmob_api');
+  $submit_url = token_replace('[site-url]') . $path . "/user-picture/upload-user-picture.php";
+
+  // The form fields and their values
+  $post_data = array(
+    "picture_upload" => "@$filename",
+  );
+  // The general format for file upload fields is '@file_name_here'. If the form 
+  // you're has multiple file fields you can upload several files if you use the 
+  // correct field names
+
+  $ch = curl_init($submit_url);
+  // Follow redirects (optional)
+  curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+  // Use the "POST" method (possibly redundant)
+  curl_setopt($ch, CURLOPT_POST, 1);
+  curl_setopt($ch, CURLOPT_POSTFIELDS, $post_data);
+
+  // Upload the file now
+  $results = curl_exec($ch);
+  curl_close ($ch);
+  // Now the $results variable contains any response the $submit_url might have 
+  // returned, or false if upload failed
+}
+
+/**
+ * Helper function used to display permitted operations over determined content
+ */
+function _redinmob_api_onw_data_operations($data){
+  global $user;
+  
+  if($user->uid == $data->users_uid){
+    $links = l(t('Edit'), 'node/' . $data->nid . '/edit');
+    
+    $options = array(
+      'query' => drupal_get_destination(),
+    );
+    if($data->node_status){
+      url();
+      $links .= l(t('Pause'), 'node/' . $data->nid . '/pause', $options);
+    } else {
+      $links .= l(t('Reactivate'), 'node/' . $data->nid . '/unpause', $options);
+    }
+    
+    $links .= l(t('Delete'), 'node/' . $data->nid . '/delete');
+    
+    return $links;
+  }
+  
+  return '';
+}

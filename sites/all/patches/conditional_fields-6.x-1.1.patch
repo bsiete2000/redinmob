@@ -1,0 +1,23 @@
+--- conditional_fields.old      2011-06-29 09:45:42.414710810 -0700
++++ conditional_fields.module   2011-06-29 09:47:30.927343917 -0700
+@@ -824,7 +824,19 @@ function conditional_fields_check_empty(
+   elseif (isset($field[0]['nid'])) {
+     $value = $field[0]['nid'];
+   }
+-
++  // User reference
++  elseif (isset($field[0]['uid'])) {
++    $value = $field[0]['uid'];
++  }
++  // Role reference
++  elseif (isset($field[0]['rid'])) {
++    $value = $field[0]['rid'];
++  }
++  // Email field
++  elseif (isset($field[0]['email'])) {
++    $value = $field[0]['email'];
++  }
++
+   if (!count($value) || (is_string($value) && drupal_strlen(trim($value)) == 0)) {
+     return TRUE;
+   }

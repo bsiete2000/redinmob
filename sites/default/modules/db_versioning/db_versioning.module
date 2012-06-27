@@ -1,0 +1,56 @@
+<?php
+
+function db_versioning_menu(){
+  $items['db_versioning'] = array(
+    'page callback' => 'carajo',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+function carajo(){
+  // Get the db name
+  global $db_url;  
+  preg_match('/[^\/]*$/', $db_url, $matches);
+  
+  $dbName = $matches[0];
+  
+  // Get all the system tables
+  $sql = 'SHOW TABLES;';
+  $result = db_query($sql);
+  $row_index = "Tables_in_$dbName";  // Name of the index generated
+  
+  $output = '';
+  
+  // Loop through the tables
+  while($table_data = db_fetch_array($result)) {
+    // Extract additional info about the table
+    $sql = "DESC " . $table_data[$row_index];
+    $result2 = db_query($sql);
+    $table_name = $table_data[$row_index];
+
+    $table_data = '';
+    $discard = true;
+    // Loop through the table fields
+    while($field_data = db_fetch_array($result2)) {
+      // Discard non PK fields
+      if($field_data['Key'] != 'PRI'){
+        continue;
+      }
+      
+      if($discard && $field_data['Extra'] == 'auto_increment'){
+        $discard = false;
+      }
+      
+      $table_data .= '<pre>' . print_r($field_data, true) . '</pre>';
+    }
+    
+    if($table_data && !$discard){
+      $output .= $table_name . '</br>' . $table_data;
+    }
+  }
+  
+  print $output;
+}

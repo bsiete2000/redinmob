@@ -1,0 +1,5 @@
+; $Id:  $
+name = Correct Admin Bar Position
+description = Corrects the position of the admin bar when displayed in the top, and admin menu is also enabled there
+package = Util
+core = "6.x"

@@ -1,0 +1,982 @@
+<?php
+// $Id: $
+
+/**
+ * Helper function used to display the community messages form
+ */
+function _community_messages_alters_view_form($object = NULL){
+  $output = '';
+
+  // Get the current view
+  $view = views_get_current_view();
+  
+  // required for Drupal 6
+  module_load_include('inc', 'node', 'node.pages');
+
+  // which nodeform you want
+  $node_type = 'community_message';
+  $form_id = $node_type . '_node_form';
+
+  // maybe add current users info
+  global $user;
+
+  // create a blank node
+  $node->uid = $user->uid;
+  $node->name = (isset($user->name) ? $user->name : '');
+  $node->type = $node_type;
+  $node->language = '';
+  
+  // Show the form differently depending on where in the page it is gonna be placed
+  switch ($view->current_display) {
+    case 'page_1':
+      // Load some additional text
+      $output .= '<div class="sub-title">' . t('Latest News') . '</div>';
+
+      // Load the form
+      $output .= drupal_get_form($form_id, $node, 'muro');
+
+      // Change the title of the page as the previous code set it to another value
+      drupal_set_title($view->display['page_1']->display_options['title']);
+
+      break;
+
+    case 'node_content_1':
+      // Load the form
+      $output .= drupal_get_form($form_id, $node, 'reply');
+
+      break;
+  }
+
+//  if ($entity) {
+//    // Using the node itself. Initially this approach won't be used in favor of 
+//    // using $_GET['message_reply_to_message'], but in practice we choose this 
+//    // approach instead, because there are many forms displayed in a single page,
+//    // and using a var like $_GET is a too general solution in this case
+//    $languages = field_available_languages('node', field_info_field_by_id('field_message_reply_to_message'));
+//    $node->field_message_reply_to_message[array_pop($languages)][]['nid'] = $entity->nid;
+//  }
+//
+//  // Display treatment of form for the different levels
+//  if (isset($entity, $entity->view) || isset($entity->{'__add_form'})) {
+//    $output = '';
+//    
+//    if($entity->view->current_display == 'page' || isset($entity->{'__add_form'})) {
+//      // Load the form, without the drupal_get_form function, to prevent the load
+//      // of cache data
+//      $form_state_aux = form_state_defaults();
+//      $form_state_aux['node_ref'] = $node;
+//      $form_id = '_feature_content_type_message_reply';
+//      
+//      $form = drupal_retrieve_form($form_id, $form_state_aux);
+//      drupal_prepare_form($form_id, $form, $form_state_aux);
+//      drupal_process_form($form_id, $form, $form_state_aux);
+//      
+//      $output = drupal_render($form);
+//    }
+//    
+//    return $output;
+//  }
+//  
+//  // Hide the form if a flag explicitly says so
+//  if(isset($entity, $entity->{'__no_add_form'})) {
+//    return '';
+//  }
+//
+//  // Hide form when the url has a content-only parameter
+//  if ($_GET['q'] == 'flash' && isset($_GET['content-only'])) {
+//    return '';
+//  }
+   
+  return $output;
+}
+
+///**
+// * Implementation of hook_menu_alter
+// */
+//function proyecto_propiedad_form_alters_menu_alter(&$items) {
+//  // Update the page arguments of the desired menu item, to turn it into a propiedad
+//  // creation item
+//  $items['node/add/proyecto-propiedad']['page arguments'] = array('propiedad');
+//}
+//
+///**
+// * Implementation of hook_menu().
+// */
+//function proyecto_propiedad_form_alters_menu() {
+//  $items = array();
+//
+//  // Addition of a menu router, to be used in the proyecto-propiedad filefield, instead
+//  // of th default filefield_js()
+//  $items['filefield/ahah/proyecto_propiedad/field_proyecto_propiedad_planos/%'] = array(
+//    'page callback' => '_proyecto_propiedad_form_alters_filefield_js',
+//    'page arguments' => array(2, 3, 4),
+//    'access callback' => 'filefield_edit_access',
+//    'access arguments' => array(2, 3),
+//    'type' => MENU_CALLBACK,
+//  );
+//
+//  return $items;
+//}
+//
+///**
+// * Implementation of hook_theme
+// */
+//function proyecto_propiedad_form_alters_theme($existing, $type, $theme, $path) {
+//  $items = array();
+//  
+//  $items['proyecto_propiedad_form_alters_proyecto_propiedad_theme'] = array(
+//    'arguments' => array(
+//      'form' => NULL,
+//    ),
+//  );
+//  
+//  
+//  return $items;
+//} 
+//
+///**
+// * Implementation of hook_form_FORM_ID_alter
+// */
+//function proyecto_propiedad_form_alters_form_propiedad_node_form_alter(&$form, &$form_state) {
+//  // This alter function runs only when the proper arguments has been found in the
+//  // url
+//  $args = arg();
+//  
+//  if($args[2] != 'proyecto-propiedad'){
+//    return;
+//  }
+//  
+//  global $user;
+//  
+//  // Set an after_build function to do some fixes to the form elements
+//  $form['#after_build'][] = '_proyecto_propiedad_form_alters_general_fixes';
+//
+//  // Fix some disposition of things in the form
+//  $form['#pre_render'][] = '_proyecto_propiedad_form_alters_fix_weights';
+//
+//  // Add the proyecto-propiedad data extracted from the form into the main form. For
+//  // this, the usual drupal_get_form is used, with extra params that initiates the
+//  // magic. What it's passed, apart from what the form could need (for example in 
+//  // case of node forms a $node object is needed), is an array with the next stuff
+//  // in it:
+//  //
+//  //    $embedded_in_stuff['embedded in'] = array(
+//  //      'form id' => <id of the form>,
+//  //      'theme function' => <theme function name>,
+//  //      'theme params' => <data to be used in the theme function as params>,
+//  //    );
+//  //
+//  // What will be done with that data is part of the hook_form_alter defined for 
+//  // the form defined in <id of the form>.
+//  $embedded_in_stuff['embedded in'] = array(
+//    'form id' => 'proyecto_propiedad_node_form',
+//    'theme function' => 'proyecto_propiedad_form_alters_proyecto_propiedad_theme',
+//  );
+//  
+////  // Display proyecto_propiedad stuff depending on the current step and total steps
+////  $proyecto_propiedad_stuff = '';
+////  
+////  if($form_state['storage']['step'] == $form_state['storage']['total_steps'] - 1){
+////    // Show the proyecto_propiedad items
+////    $embedded_in_stuff['embedded in']['theme params'] = 'unidades';
+////    
+////    // Load the other form just if the all the parameters has been set
+////    if(isset($embedded_in_stuff['embedded in']['theme params'])){
+////      // Create a node object, necessary for this content type
+////      $type = 'proyecto_propiedad';
+////      
+////      $node = array(
+////        'uid' => $user->uid, 
+////        'name' => (isset($user->name) ? $user->name : ''), 
+////        'type' => $type, 
+////        'language' => '',
+////      );
+////      
+////      $proyecto_propiedad_stuff = drupal_get_form($type . '_node_form', $node, $embedded_in_stuff);
+////    }
+////  }
+////  
+////  // Shows the user stuff only if it has something to show
+////  if($proyecto_propiedad_stuff){
+////    $form['proyecto_propiedad_stuff'] = array(
+////      '#value' => $proyecto_propiedad_stuff,
+////    );
+////  }
+//
+//  // Create a node object, necessary for this content type
+//  $type = 'proyecto_propiedad';
+//
+//  $node = array(
+//    'uid' => $user->uid, 
+//    'name' => (isset($user->name) ? $user->name : ''), 
+//    'type' => $type, 
+//    'language' => '',
+//  );
+//  
+//  // Array with information about the theme params to pass to the proyecto-propiedad form,
+//  // and a label as value, to use as title
+//  $form_items = array(
+//    'unidades' => t('Units'),
+//    'planos' => t('Planos'),
+//  );
+//
+//  // Loop through the different user data options to load them
+//  foreach ($form_items as $item => $label) {
+//    $embedded_in_stuff['embedded in']['theme params'] = $item;
+//    $proyecto_propiedad_stuff = drupal_get_form($type . '_node_form', $node, $embedded_in_stuff);
+//
+//    // Shows the data only if it has something to show
+//    $name = preg_replace('/\s/', '_', $item);
+//
+//    if($proyecto_propiedad_stuff){
+//      $form['proyecto_propiedad'][$name] = array(
+//        '#value' => $proyecto_propiedad_stuff,
+//        '#title' => $label,
+//      );
+//    }
+//  }
+//
+//  // Add custom validation and submit function, to handle the extra form items
+//  $form['#validate'][] = '_proyecto_propiedad_form_alters_proyecto_propiedad_validate';
+//  $form['buttons']['submit']['#submit'][] = '_proyecto_propiedad_form_alters_proyecto_propiedad_submit';
+//}
+
+/**
+ * Implementation of hook_form_FORM_ID_alter
+ */
+function community_messages_alters_form_community_message_node_form_alter(&$form, $form_state) {
+  // Alter the form, just in case it will be displayed in the Muro
+  if(!(isset($form['#parameters'][3]) && in_array($form['#parameters'][3], array('muro', 'reply')))){
+    return;
+  }
+  
+  // Add a js file with a plugin, used in the process of loading a message
+  $path = drupal_get_path('module', 'community_messages_alters');
+  drupal_add_js($path . '/js/jquery.plugins.js');
+  drupal_add_js($path . '/js/ahah-process.js');
+  
+  // Register the form to be used with ahah_helper module facilities
+  ahah_helper_register($form, $form_state);
+  
+  // Create the id for the ahah-wrapper
+  $id = $form['form_build_id']['#value'] . '-ahah-wrapper-container';
+  
+  // Add a generic container element, to be used as ahah answers repo
+  $form['ahah-wrapper'] = array(
+    '#value' => '<div id="' . $id . '" class="ahah-wrapper-container"></div>',
+  );
+  
+  // Add some css, to hide the container
+  $path = drupal_get_path('module', 'community_messages_alters');
+  drupal_add_css($path . '/styles/ahah-wrapper.css');   
+  
+  // In case of a reply, additional CSS is loaded
+  if($form['#parameters'][3] == 'reply'){
+    drupal_add_css($path . '/styles/reply.css');
+  }
+  
+  // Load the value to be stored in the ahah-response form element
+  if($nid = $form_state['nid']){
+    // Clean the drupal messages, so it doesn't appear in the response
+    drupal_get_messages();
+    
+    // Load the node object
+    $node = node_load($nid);
+    // Prepare the node object
+    $node = node_prepare($node);
+    // Load the response data to be displayed
+    $response = node_view($node);
+  }
+  
+  // Add an element used to store the response data, to be send back to the client
+  $form['ahah-response'] = array(
+    '#type' => isset($response) ? 'markup' : 'value',
+    '#value' => isset($response) ? $response : '',
+  );
+    
+  // Set an after_build function used to do some modifications
+  $form['#after_build'][] = '_community_messages_alters_form_slight_fixes';
+  
+  // Add ahah functionality
+  $form['buttons']['submit']['#ahah'] = array(
+    // The path is set to the element 'ahah-response', to get the response data from it
+    'path'    => ahah_helper_path(array('ahah-response')),
+    'wrapper' => $id,
+    'method' => 'replace',
+  );
+  
+//  
+//  foreach ($form['#parameters'] as $value) {
+//    if(is_array($value) && isset($value['embedded in']) && is_array($value['embedded in']) && $value['embedded in']['form id'] == 'proyecto_propiedad_node_form'){
+//      $embedded_in = $value['embedded in'];
+//      $abort = false;
+//
+//      break;
+//    }
+//  }
+//  
+//  if($abort){
+//    return;
+//  }
+//  
+//  // Change the #theme property value of the form
+//  $form['#theme'] = $embedded_in['theme function'];
+//
+//  // Append extra theme parameters through the use of data passed in the #parameters
+//  // item into this functions
+//  $form['#embedded_in_theme_params'] = $embedded_in['theme params'];
+//  
+//  // A new after_build function is set, used to fix the returned data called by
+//  // drupal_get_form. Has to be run in an after_build step, to ensure the not 
+//  // necessary data is correctly remove
+//  $form['#after_build'][] = '_proyecto_propiedad_form_alters_proyecto_propiedad_fix_drupal_get_form_defaults';
+//
+//  // Set the #tree property of the form, to force any element inside of it, to be
+//  // displayed with all its parents. This to help any processes that use that data
+//  $form['#tree'] = true;  
+}
+
+/**
+ * After build function used to remove some parts of the form, no longer necessary
+ */
+function _community_messages_alters_form_slight_fixes($form, $form_state){
+  // Remove the sections place
+  unset($form['sections']);
+  
+  // Convert the nodereference field into a hidden one. We don't remove it from the
+  // form, to prevent broke it on submit
+  $form['field_community_message_reply_to'][0]['nid']['nid']['#type'] = 'hidden';
+  
+  // Return the form
+  return $form;
+}
+
+
+/**
+ * Helper function used to display the footer links in community messages 
+ */
+function _community_messages_alters_footer_links($object){
+  global $user;
+  
+  $output = '';
+  
+  // Load the current view, to determine if the links has to be displayed or not
+  $view = views_get_current_view();
+  
+  if($view->current_display == 'node_content_1'){
+    return $output;
+  }
+  
+  // Create a link to send a private message, if the current user and the object
+  // user are different
+  if($user->uid != $object->uid){
+    $output .= l(t('Send private message'), 'messages/new/' . $object->uid, array('attributes' => array('class' => 'send-private-message')));    
+  }
+
+  // Create a link to create a reply
+  $output .= l(t('Comment publication'), 'home', array('attributes' => array('class' => 'comment-publication')));
+  
+  return $output;
+}
+
+///**
+// * Function used to fix the normal behavior of the drupal_get_form function to prevent
+// * <form> tags in the returned code by the form rendering process
+// */
+//function _proyecto_propiedad_form_alters_proyecto_propiedad_fix_drupal_get_form_defaults($form, $form_state){
+//  // Remove the #type to make the form render just the fields, without wrapper <form>
+//  // elements
+//  unset($form['#type']);
+//  
+//  return $form;
+//}
+//
+/////////////////
+////// HELPERS //
+/////////////////
+///**
+// * Theme function for the proyecto propiedad form when embedded into propiedad form.
+// */
+//function theme_proyecto_propiedad_form_alters_proyecto_propiedad_theme($form){
+//  // Render the form following theme params directions
+//  switch ($form['#embedded_in_theme_params']) {
+//    case 'unidades':
+//      // Render data
+//      $data[] = drupal_render($form['field_unidades']);
+//      
+//      return implode('', $data);
+//
+//      break;
+//    
+//    case 'planos':
+//      // Render data
+//      $data[] = drupal_render($form['field_proyecto_propiedad_planos']);
+//      
+//      return implode('', $data);
+//
+//      break;
+//  }
+//}
+//
+///**
+// * Validation function used to deal with the user data
+// */
+//function _proyecto_propiedad_form_alters_proyecto_propiedad_validate($form, &$form_state) {
+//  // Creation of a node, necessary for this action
+//  module_load_include('inc', 'node', 'node.pages');  
+//  $node->type = 'proyecto_propiedad';
+//  
+//  // Creates auxiliar variables that will store proyecto_propiedad data to be validated
+//  $form_id = $node->type . '_node_form';
+//  $form_state_aux = array();
+//  
+//  $form_state_aux['values']['field_unidades'] = $_POST['field_unidades'];
+//  $form_state_aux['values']['field_proyecto_propiedad_planos'] = $_POST['field_proyecto_propiedad_planos'];
+//
+//  $form_state_aux['values']['op'] = $_POST['op'];
+//  $form_state_aux['rebuild'] = TRUE;  // Set to ensure the form won't be submitted at this step
+//      
+//  // The function 'drupal_execute' could be used here to implement a lot of the 
+//  // normal behavior, but as we are loading just some fields, the internals of that
+//  // function have to be expanded here to do the neccesary adjustments
+//  // 
+//  //drupal_execute($form_id, $form_state_aux, $node);
+//  
+//  // Load the args to be passed
+//  $args[] = $form_id;
+//  $args[] = &$form_state_aux; // Make sure $form_state is passed around by reference.
+//  $args[] = $node;
+//  
+//  // Call to all the necessary functions
+//  $form_aux = call_user_func_array('drupal_retrieve_form', $args);
+//  $form_aux['#post'] = $form_state_aux['values'];
+//  drupal_prepare_form($form_id, $form_aux, $form_state_aux);
+//  
+//  // Here comes the additional step, reason to not use drupal_execute
+//  $form_aux['field_propiedad'][0]['#required'] = 0;
+//  
+//  drupal_process_form($form_id, $form_aux, $form_state_aux);
+//}
+//
+///**
+// * Submit function used to deal with the user data
+// */
+//function _proyecto_propiedad_form_alters_proyecto_propiedad_submit($form, &$form_state) {
+//  // At this point, all the validation has happened sucessfully. It's time to create
+//  // the node. drupal_execute is not used, in favor of node_save, who proves to be
+//  // easier to use.
+//  // Basic node info is set, also with some aditional items
+//  $node = array(
+//    'type' => 'proyecto_propiedad',
+//    'uid' => $form_state['node']['uid'],
+//    //'title' => $form_state['values']['title'], // Not set, because ot the use
+//                                                 // of auto_nodetitle module with
+//                                                 // this CT
+//    'field_propiedad' => array(array('nid' => $form_state['nid'])),
+//    'field_unidades' => $_POST['field_unidades'],
+//    'field_proyecto_propiedad_planos' => $_POST['field_proyecto_propiedad_planos'],
+//    'pathauto_perform_alias' => FALSE,
+//    'language' => $form_state['node']['language'],
+//  );
+//
+//  $node = (object)$node;
+//  node_save($node);
+//  
+//  // A value in $form_state is changed to reflect the use the nid of the recently
+//  // created node instead of the one using the property content type
+//  $form_state['nid'] = $node->nid;
+//}
+//
+///**
+// * After build function used to fix general stuff
+// */
+//function _proyecto_propiedad_form_alters_general_fixes($form){
+//  // Remotion of address field
+//  unset($form['field_direccion']);
+//  
+//  // Set an empty value in the #children property, to hide the field from appear
+//  // in the form
+//  $form['field_plan_reference']['#children'] = '';
+//  
+//  return $form;
+//}
+//
+///**
+// * Pre-Render function used to fix some weight problems with some stuff
+// */
+//function _proyecto_propiedad_form_alters_fix_weights($form){
+//  if(isset($form['proyecto_propiedad_stuff'])){
+//    $form['proyecto_propiedad_stuff']['#weight'] = $form['title']['#weight'] + 0.1;
+//  }
+//  
+//  return $form;
+//}
+//
+///**
+// * Implementation of hook_theme_propiedad_node_form_alter
+// */
+//function proyecto_propiedad_form_alters_theme_propiedad_node_form_alter(&$form){
+//  // Get the args in the URL, to work only in specific moments
+//  $args = arg();
+//  
+//  if(!($args[0] == 'node' && $args[1] == 'add' && $args[2] == 'proyecto-propiedad')){
+//    return;
+//  }
+//  
+//  // Create a group of things to order stuff
+//  $form['tabset']['property_required']['top_right'] = array(
+//    '#type' => 'fieldset',
+//    '#weight' => '-10',
+//    '#prefix' => '<div class="top-right">',
+//    '#suffix' => '</div>',
+//    'proyecto_propiedad' => $form['proyecto_propiedad'],
+//  );
+//  unset($form['proyecto_propiedad']);
+//}
+//
+///**
+// * Menu callback; used to override the custom callback filefield_js, to implement
+// * custom behaviors
+// */
+//function _proyecto_propiedad_form_alters_filefield_js($type_name, $field_name, $delta) {
+//  $field = content_fields($field_name, $type_name);
+//
+//  // Immediately disable devel shutdown functions so that it doesn't botch our
+//  // JSON output.
+//  $GLOBALS['devel_shutdown'] = FALSE;
+//
+//  if (empty($field) || empty($_POST['form_build_id'])) {
+//    // Invalid request.
+//    drupal_set_message(t('An unrecoverable error occurred. The uploaded file likely exceeded the maximum file size (@size) that this server supports.', array('@size' => format_size(file_upload_max_size()))), 'error');
+//    print drupal_to_js(array('data' => theme('status_messages')));
+//    exit;
+//  }
+//
+//  // Create some basic vars
+//  $type = 'proyecto_propiedad';
+//  $form_id = $type . '_node_form'; 
+//  
+//  // Slight modifications to simulate the use of another form
+//  $_POST['form_build_id'] .= '-' . $field_name;
+//  $_POST['form_id'] = $form_id;
+//  
+//  // Load the form, if already in cache
+//  $form_state = array('submitted' => FALSE);
+//  $form_build_id = $_POST['form_build_id'];
+//  $form = form_get_cache($form_build_id, $form_state);
+//
+//  if(!$form) {
+//    // Load the form entirely, and saves it in cache
+//    global $user;
+//
+//    module_load_include('inc', 'node', 'node.pages');  
+//
+//    // Create a node object, necessary for this content type
+//    $node = array(
+//      'uid' => $user->uid, 
+//      'name' => (isset($user->name) ? $user->name : ''), 
+//      'type' => $type, 
+//      'language' => '',
+//    );
+//
+//    // Set basic data
+//    $form_state = array('storage' => NULL, 'submitted' => FALSE);
+//    $form_state['post'] = $_POST;
+//
+//    // Get the form for the content type 'proyecto propiedad'
+//    $args = array($form_id, &$form_state, $node);
+//    $form = call_user_func_array('drupal_retrieve_form', $args);
+//    $form['#build_id'] = $form_build_id;
+//    
+//    drupal_prepare_form($form_id, $form, $form_state);
+//    $original_form = $form;
+//    unset($form_state['post']);
+//    $form['#post'] = $_POST;
+//
+//    drupal_process_form($form_id, $form, $form_state);
+//
+//    if (!empty($form['#cache'])) {
+//      form_set_cache($form_build_id, $original_form, $form_state);
+//
+//      // Extracts the form from cache, again, to be as clear as possible with the
+//      // following lines of code
+//      $form_state = array('submitted' => FALSE);
+//      $form_build_id = $_POST['form_build_id'];
+//      $form = form_get_cache($form_build_id, $form_state);      
+//    }
+//  }
+//
+//  // Build the form. This calls the file field's #value_callback function and
+//  // saves the uploaded file. Since this form is already marked as cached
+//  // (the #cache property is TRUE), the cache is updated automatically and we
+//  // don't need to call form_set_cache().
+//  $args = $form['#parameters'];
+//  $form_id = array_shift($args);
+//  $form['#post'] = $_POST;
+//  $form = form_builder($form_id, $form, $form_state);
+//
+//  // Update the cached form with the new element at the right place in the form.
+//  if (module_exists('fieldgroup') && ($group_name = _fieldgroup_field_get_group($type_name, $field_name))) {
+//    if (isset($form['#multigroups']) && isset($form['#multigroups'][$group_name][$field_name])) {
+//      $form_element = $form[$group_name][$delta][$field_name];
+//    }
+//    else {
+//      $form_element = $form[$group_name][$field_name][$delta];
+//    }
+//  }
+//
+//  if (!isset($form_element)) {
+//    $form_element = $form[$field_name][$delta];
+//  }
+//
+//  if (isset($form_element['_weight'])) {
+//    unset($form_element['_weight']);
+//  }
+//
+//  $output = drupal_render($form_element);
+//
+//  // AHAH is not being nice to us and doesn't know the "other" button (that is,
+//  // either "Upload" or "Delete") yet. Which in turn causes it not to attach
+//  // AHAH behaviours after replacing the element. So we need to tell it first.
+//
+//  // Loop through the JS settings and find the settings needed for our buttons.
+//  $javascript = drupal_add_js(NULL, NULL);
+//  $filefield_ahah_settings = array();
+//  if (isset($javascript['setting'])) {
+//    foreach ($javascript['setting'] as $settings) {
+//      if (isset($settings['ahah'])) {
+//        foreach ($settings['ahah'] as $id => $ahah_settings) {
+//          if (strpos($id, 'filefield-upload') || strpos($id, 'filefield-remove')) {
+//            $filefield_ahah_settings[$id] = $ahah_settings;
+//          }
+//        }
+//      }
+//    }
+//  }
+//
+//  // Add the AHAH settings needed for our new buttons.
+//  if (!empty($filefield_ahah_settings)) {
+//    $output .= '<script type="text/javascript">jQuery.extend(Drupal.settings.ahah, '. drupal_to_js($filefield_ahah_settings) .');</script>';
+//  }
+//
+//  $output = theme('status_messages') . $output;
+//
+//  // For some reason, file uploads don't like drupal_json() with its manual
+//  // setting of the text/javascript HTTP header. So use this one instead.
+//  print drupal_to_js(array('status' => TRUE, 'data' => $output));
+//  exit;
+//}
+//
+///**
+// * Implementation of hook_nodeapi
+// */
+//function proyecto_propiedad_form_alters_nodeapi(&$node, $op, $a3 = NULL, $a4 = NULL) {
+//  // Act just in the correct node type
+//  if($node->type != 'proyecto'){
+//    return;
+//  }
+//  
+//  // Different behavior for the different operations
+//  switch ($op) {
+//    case 'load':  // do slight modifications to the title
+//      $element = array(
+//        '#type' => 'item',
+//        '#title' => t('Cod'),
+//        '#value' => $node->nid,
+//        '#prefix' => '<div class="code">',
+//        '#suffix' => '</div>',
+//      );
+//
+//      // Add the code to the title
+//      $extra .= drupal_render($element);;
+//
+//      // Change title, and save old version
+//      $node->title_old = $node->title;
+//      $node->title .= $extra;
+//
+//      break;
+//      
+//    case 'prepare': // return the title to it's original state
+//      if(isset($node->title_old)){
+//        $node->title = $node->title_old;
+//      }
+//      
+//      break;
+//  }
+//}
+
+/**
+ * Implementation of hook_block 
+ */
+function community_messages_alters_block($op = 'list', $delta = 0, $edit = array()){
+  switch ($op) {
+    case 'list':  // List operation
+      $blocks['current_user_data'] = array(
+        'info' => t('Current User Data'), 
+      );
+
+      $blocks['publish_content'] = array(
+        'info' => t('Publish Property and/or Project'), 
+      );
+
+      $blocks['muro_shortcuts'] = array(
+        'info' => t('Muro shortcuts'), 
+      );
+
+      $blocks['mi_perfil_shortcuts'] = array(
+        'info' => t('Mi Perfil shortcuts'), 
+      );
+
+      $blocks['mensajes_shortcuts'] = array(
+        'info' => t('Mensajes shortcuts'), 
+      );
+
+      $blocks['colegas_shortcuts'] = array(
+        'info' => t('Colegas shortcuts'), 
+      );
+      
+      $blocks['noticias_shortcuts'] = array(
+        'info' => t('Noticias shortcuts'), 
+      );
+      
+      return $blocks;
+    
+    case 'view':  // View operation
+      $function = '_community_messages_alters_block_' . $delta;
+      $block = array(
+        'subject' => '',
+        'content' => $function(),
+      );
+      
+      switch ($delta) {
+        case 'current_user_data':
+          global $user;
+
+          $block['subject'] = theme('username', $user);
+
+          break;
+
+        case 'mi_perfil_shortcuts':
+          $block['subject'] = t('Mi Perfil');
+
+          break;
+
+        case 'mensajes_shortcuts':
+          $block['subject'] = t('Mensajes');
+
+          break;
+
+        case 'colegas_shortcuts':
+          $block['subject'] = t('Colegas');
+
+          break;
+      
+        case 'noticias_shortcuts':
+          $block['subject'] = t('Noticias Inmobiliarias');
+
+          break;
+      }
+      
+      // Return the block
+      return $block;
+  }
+}
+
+/**
+ * Helper function used to display the 'Current User Data' block
+ */
+function _community_messages_alters_block_current_user_data(){
+  global $user;
+  
+  // Load the user profile content
+  user_build_content($user);
+  
+  // Load the user picture
+  $output .= redinmobiliaria_user_picture($user, 'user_picture_current_user_data');
+  
+  // Load the edit data links
+  $output .= l(t('Edit data'), 'user/' . $user->uid . '/edit', array('attributes' => array('class' => 'edit-data')));
+  $output .= l(t('Change photo'), 'user/' . $user->uid . '/edit', array('attributes' => array('class' => 'change-photo')));
+  
+  // Load info from related content profile node
+  $params = array(
+    'type' => 'contacto_publicacion',
+    'uid' => $user->uid,
+  );
+  
+  if($profile = node_load($params)){
+    $fields = array(
+      'field_nombre',
+      'field_email',
+      'field_telefono',
+      'field_celular',
+      'field_pagina_web',
+    );
+    
+    foreach ($fields as $field_name) {
+      switch ($field_name) {
+        case 'field_email':
+          $value = 'mailto:' . $profile->{$field_name}[0]['email'];
+          $value = l($value, $value);
+
+          break;
+
+        case 'field_pagina_web':
+          $value = $profile->{$field_name}[0]['url'];
+          $value = l($value, $value);
+
+          break;
+        
+        default:
+          $value = $profile->{$field_name}[0]['value'];
+          
+          break;
+      }
+      
+      // Special treatment for the name
+      if($field_name == 'field_nombre'){
+        $value .= ' ' . $profile->{'field_apellido'}[0]['value'];
+        $value = trim($value);
+        
+        if(!$value){
+          $value = $user->name;
+        }
+      }
+      
+      if(!$value){
+        continue;
+      }
+      
+      $field = content_fields($field_name, $params['type']);
+      
+      $element = array(
+        '#title' => $field['widget']['label'],
+        '#value' => $value,
+      );
+
+      $output .= theme('item', $element);
+    }
+  } else {
+    // Present a create your profile data link
+    $element = array(
+      '#content_type' =>  $params['type'],
+      '#uid' =>  $user->uid,
+    );
+    
+    $output .= theme('content_profile_display_add_link', $element);
+  }
+    
+  return $output;
+}
+
+/**
+ * Helper function used to display the 'Publish Property and/or Project' block
+ */
+function _community_messages_alters_block_publish_content(){
+  $output = '';
+  
+  // Add a link to create propiedades
+  if(node_access('create', 'propiedad')){
+    $output .= l(t('Publish Property'), 'node/add/propiedad');
+  }
+
+  // Add a link to create proyectos
+  if(node_access('create', 'proyecto')){
+    $output .= l(t('Publish Project'), 'node/add/proyecto');
+  }
+  
+  return $output;
+}
+
+/**
+ * Helper function used to display the 'Muro shortcuts' block
+ */
+function _community_messages_alters_block_muro_shortcuts(){
+  $output = '';
+  
+  // Load the view to get access info about it
+  $view = views_get_view('community_messages');
+
+  // Add a link to Muro page
+  if($view->access('page_1')){  
+    $output .= l(t('Muro'), 'mensajes-comunidad');
+  }
+  
+  return $output;
+}
+
+/**
+ * Helper function used to display the 'Mi Perfil shortcuts' block
+ */
+function _community_messages_alters_block_mi_perfil_shortcuts(){
+  global $user;
+  
+  $output = '';
+
+  // Add links
+  $output .= l(t('See profile'), 'user/' . $user->uid);
+  $output .= l(t('Edit profile'), 'user/' . $user->uid . '/edit');
+  if(node_access('create', 'propiedad')){
+    $output .= l(t('My properties'), 'user/' . $user->uid, array('fragment' => 'user-view-page-bottom-tab-3'));
+  }
+  if(node_access('create', 'proyecto')){
+    $output .= l(t('My projects'), 'user/' . $user->uid, array('fragment' => 'user-view-page-bottom-tab-2'));
+  }
+  
+  return $output;
+}
+
+/**
+ * Helper function used to display the 'Mensajes shortcuts' block
+ */
+function _community_messages_alters_block_mensajes_shortcuts(){
+  $output = '';
+  
+  // Add links
+  if(privatemsg_user_access('write privatemsg')){
+    $output .= l(t('Write message'), 'messages/new');
+  }
+  if(privatemsg_user_access()){
+    $output .= l(t('See messages'), 'messages');
+    $output .= l(t('Sent messages'), 'messages');
+  }
+    
+  return $output;
+}
+
+/**
+ * Helper function used to display the 'Colegas shortcuts' block
+ */
+function _community_messages_alters_block_colegas_shortcuts(){
+  $output = '';
+  
+  // Load the view to get access info about it
+  $view = views_get_view('usuarios');
+
+  // Add links
+  if($view->access('page_4')){
+    $output .= l(t('See colleagues'), 'colegas');
+  }
+  
+  return $output;
+}
+
+/**
+ * Helper function used to display the 'Noticias shortcuts' block
+ */
+function _community_messages_alters_block_noticias_shortcuts(){
+  $output = '';
+  
+  // Load the view to get access info about it
+  $view = views_get_view('noticias');
+
+  // Add links
+  if($view->access('page_2')){
+    $output .= l(t('See news'), 'noticias');  
+  }
+  if(node_access('create', 'noticia')){
+    $output .= l(t('Write news'), 'node/add/noticia');
+  }
+  
+  return $output;
+}

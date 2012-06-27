@@ -1,0 +1,6 @@
+; $Id:  $
+name = Db Versioning
+description = Handle the versioning of the site Database
+
+package = Versioning
+core = "6.x"

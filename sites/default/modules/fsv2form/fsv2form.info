@@ -1,0 +1,6 @@
+; $Id:  $
+name = Form State Values to Form
+description = Helper module used to pass values in the form_state['values'] array to a form, and populate it.
+
+package = Util
+core = "6.x"

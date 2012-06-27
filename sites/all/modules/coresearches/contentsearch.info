@@ -1,0 +1,14 @@
+; $Id: contentsearch.info,v 1.1.4.1 2008/07/12 01:35:02 robertDouglass Exp $
+name = Content search
+description = Adds a tab to the search page for finding content.
+package = Search
+dependencies[] = search
+version = VERSION
+core = 6.x
+
+; Information added by drupal.org packaging script on 2009-10-25
+version = "6.x-1.1"
+core = "6.x"
+project = "coresearches"
+datestamp = "1256509826"
+

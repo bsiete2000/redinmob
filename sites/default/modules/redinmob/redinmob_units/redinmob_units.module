@@ -1,0 +1,27 @@
+<?php
+// $Id: $
+
+ /**
+  * Implementation of hook_define_units
+  */
+function redinmob_units_define_units() {
+  $units['area_m2'] = array(
+    'shortname' => t('m2'),
+    'fullname' => t('Square Meter'),
+    'symbol' => 'm2',
+    'category_id' => 'area',
+    'category' => t('Area'),
+    'decimals' => '2'
+  );
+
+  $units['area_ha'] = array(
+    'shortname' => t('ha'),
+    'fullname' => t('Hectare'),
+    'symbol' => 'ha',
+    'category_id' => 'area',
+    'category' => t('Area'),
+    'decimals' => '2'
+  );
+  
+  return $units;
+}

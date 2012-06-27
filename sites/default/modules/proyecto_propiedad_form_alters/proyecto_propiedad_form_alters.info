@@ -1,0 +1,8 @@
+; $Id:  $
+name = Proyecto Propiedad Form Alters
+description = Alterations to the Proyecto Propiedad form, to adjust to diverse scenarios
+
+dependencies[] = filefield
+
+package = RedInmobiliaria
+core = "6.x"

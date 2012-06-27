@@ -1,0 +1,15 @@
+<?php
+
+// TODO: Add controlers to let the hook know in what bootstrap stage it is.
+// This is important because the code developed has to change in order to adapt
+// to the env
+/**
+ * Implementation of hook_db_query_alter
+ */
+function db_versioning_test_db_query_alter(&$query){
+  //require_once 'sites/default/modules/db_versioning/parser/php-sql-parser/php-sql-parser.php';
+
+  //$parser = new PHPSQLParser();
+  //$parsed = $parser->parse($query);
+  //print_r($parsed);  
+}

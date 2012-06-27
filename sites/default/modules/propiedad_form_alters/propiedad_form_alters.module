@@ -1,0 +1,547 @@
+<?php
+// $Id: $
+ 
+/**
+ * Implementation of hook_theme
+ */
+function propiedad_form_alters_theme($existing, $type, $theme, $path) {
+  $items = array();
+  
+  $items['propiedad_form_alters_user_register_theme'] = array(
+    'arguments' => array(
+      'form' => NULL,
+    ),
+  );
+
+  $items['propiedad_node_form'] = array(
+    'arguments' => array(
+      'form' => NULL,
+    ),
+  );
+
+  $items['propiedad_form_alters_foto_field'] = array(
+    'arguments' => array(
+      'element' => NULL,
+    ),
+  );
+  
+  
+  return $items;
+} 
+
+/**
+ * Implementation of hook_form_alter.
+ */
+function propiedad_form_alters_form_alter(&$form, &$form_state, $form_id) {
+  // The implementation of this hook is necessary since the hook_form_FORM_ID_alter
+  // version was unnable to cover a particular aspect of the form. This is because
+  // of the way the addition of items in a image field is handled. CCK only give
+  // us the chance to change it using this type of hook, not the other one, more
+  // specific
+  
+  // Custom checks are set, to ensure just the desired scenario is affected
+  if($form_id == 'content_add_more_js' && isset($form['field_foto']) && empty($form_state)){
+    // Set another theme function for this particular field, to add custom js stuff
+    $form['field_foto']['#__original_theme_function'] = $form['field_foto']['#theme'];
+    $form['field_foto']['#theme'] = 'propiedad_form_alters_foto_field';
+  }
+}
+
+/**
+ * Implementation of hook_form_FORM_ID_alter
+ */
+function propiedad_form_alters_form_propiedad_node_form_alter(&$form, &$form_state) {
+  global $user;
+  
+  // Set an after_build function to do some fixes to the field field_tamanio_construccion
+  $form['#after_build'][] = '_propiedad_form_alters_field_tamanio_construccion_fixes';
+  
+  // Add a custom wrapper class
+  $form['#pre_render'][] = '_propiedad_form_alters_fix_wrapper';
+  
+  // Add the user registration data extracted from the form into the main form. For
+  // this, the usual drupal_get_form is used, with extra params that initiates the
+  // magic. What it's passed, apart from what the form could need (for example in 
+  // case of node forms a $node object is needed), is an array with the next stuff
+  // in it:
+  //
+  //    $embedded_in_stuff['embedded in'] = array(
+  //      'form id' => <id of the form>,
+  //      'theme function' => <theme function name>,
+  //      'theme params' => <data to be used in the theme function as params>,
+  //    );
+  //
+  // What will be done with that data is part of the hook_form_alter defined for 
+  // the form defined in <id of the form>.
+  $embedded_in_stuff['embedded in'] = array(
+    'form id' => 'propiedad_node_form',
+    'theme function' => 'propiedad_form_alters_user_register_theme',
+  );
+
+  // Add user registration items on anonymous
+  if(!$user->uid){
+    // Array with information about the theme params to pass to the user form,
+    // and a label as value, to use as title
+    $user_items = array(
+      'user registration' => t('User registration'),
+      'datos facturacion' => t('Invoice data'),
+      'contacto publicacion' => t('Publish contact'),
+    );
+
+    // Loop through the different user data options to load them
+    foreach ($user_items as $item => $label) {
+      $embedded_in_stuff['embedded in']['theme params'] = $item;
+      $user_stuff = drupal_get_form('user_register', $embedded_in_stuff);
+
+      // Shows the user stuff only if it has something to show
+      $name = preg_replace('/\s/', '_', $item);
+
+      if($user_stuff){
+        $form['user_data'][$name] = array(
+          '#value' => $user_stuff,
+          '#title' => $label,
+        );
+      }
+    }
+    
+    // Add custom validation and submit function, to handle the extra form items
+    array_unshift($form['#validate'], '_propiedad_form_alters_user_validate');
+    array_unshift($form['buttons']['submit']['#submit'], '_propiedad_form_alters_user_submit');
+  }
+}
+
+/**
+ * Implementation of hook_form_FORM_ID_alter
+ */
+function propiedad_form_alters_form_user_register_alter(&$form, $form_state) {
+  // Alter the form, just in case it has to be displayed into another form
+  $abort = true;
+  
+  foreach ($form['#parameters'] as $value) {
+    if(is_array($value) && isset($value['embedded in']) && is_array($value['embedded in']) && $value['embedded in']['form id'] == 'propiedad_node_form'){
+      $embedded_in = $value['embedded in'];
+      $abort = false;
+
+      break;
+    }
+  }
+  
+  if($abort){
+    return;
+  }
+  
+  // Change the #theme property value of the form
+  $form['#theme'] = $embedded_in['theme function'];
+
+  // Append extra theme parameters through the use of data passed in the #parameters
+  // item into this functions
+  $form['#embedded_in_theme_params'] = $embedded_in['theme params'];
+  
+  // A new after_build function is set, used to fix the returned data called by
+  // drupal_get_form. Has to be run in an after_build step, to ensure the not 
+  // necessary data is correctly remove
+  $form['#after_build'][] = '_propiedad_form_alters_user_fix_drupal_get_form_defaults';
+
+  // Set the #tree property of the form, to force any element inside of it, to be
+  // displayed with all its parents. This to help any processes that use that data
+  $form['#tree'] = true;
+}
+
+/**
+ * Function used to fix the normal behavior of the drupal_get_form function to prevent
+ * <form> tags in the returned code by the form rendering process
+ */
+function _propiedad_form_alters_user_fix_drupal_get_form_defaults($form, $form_state){
+  // Remove the #type to make the form render just the fields, without wrapper <form>
+  // elements
+  unset($form['#type']);
+  
+  return $form;
+}
+
+/////////////
+// HELPERS //
+/////////////
+/**
+ * Theme function for the user register form when embedded into propiedad form.
+ */
+function theme_propiedad_form_alters_user_register_theme($form){
+  // Render the form following theme params directions
+  switch ($form['#embedded_in_theme_params']) {
+    case 'user registration':
+      // Adjust some stuff
+      $form['account'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Sign up'),
+        '#prefix' => '<div class="user-register">',
+        '#suffix' => '</div>',
+      );
+
+      $form['mail']['#title'] = t('Email');
+      unset($form['mail']['#description']);
+      unset($form['pass']['#description']);
+      
+      $form['account']['name'] = $form['name'];
+      $form['account']['mail'] = $form['mail'];
+      $form['account']['pass'] = $form['pass'];
+      $form['account']['timezone'] = $form['timezone'];      
+
+      // Add clarification
+      $form['account']['pass']['pass1']['#prefix'] = '<div class="clarification">' . t('Remember, the requested password detailed here, is to access this site only. We are NOT requesting you to enter your email password.') . '</div>';
+      
+      // Render data
+      $data[] = drupal_render($form['user_registration_help']);
+      $data[] = drupal_render($form['account']);
+      
+      return implode('', $data);
+
+      break;
+    
+    case 'datos facturacion':
+      // Render data
+      unset($form['group_datos_facturacion']['field_ubicacion_facturacion'][0]['#title']);
+      $form['group_datos_facturacion']['field_ubicacion_facturacion'][0]['province']['#title'] = t('Province');
+
+      $data[] = drupal_render($form['field_desc_facturacion']);
+      $data[] = drupal_render($form['group_datos_facturacion']);
+      
+      return implode('', $data);
+
+      break;
+
+    case 'contacto publicacion':
+      // Render data
+      $data[] = drupal_render($form['field_desc_contacto_publicacion']);
+      $data[] = drupal_render($form['group_datos_contacto_publicacion']);
+
+      return implode('', $data);
+      
+      break;
+  }
+}
+
+/**
+ * Validation function used to deal with the user data
+ */
+function _propiedad_form_alters_user_validate($form, &$form_state) {
+  // Creates auxiliar variables that will store user data to be validated
+  $form_id = 'user_register';
+  $form_state_aux = array();
+  
+  $form_state_aux['values']['mail'] = $_POST['mail'];
+  $form_state_aux['values']['name'] = $_POST['name'];
+  $form_state_aux['values']['pass']['pass1'] = $_POST['pass']['pass1'];
+  $form_state_aux['values']['pass']['pass2'] = $_POST['pass']['pass2'];
+  $form_state_aux['values']['timezone'] = $_POST['timezone'];
+
+  foreach ($_POST['group_datos_facturacion'] as $key => $value) {
+    $form_state_aux['values'][$key] = $value;
+  }
+  
+  foreach ($_POST['group_datos_contacto_publicacion'] as $key => $value) {
+    $form_state_aux['values'][$key] = $value;
+  }
+  
+  $form_state_aux['values']['op'] = $_POST['op'];
+  $form_state_aux['rebuild'] = TRUE;  // Set to ensure the form won't be submitted at this step
+    
+  // Do the validation of user data
+  drupal_execute($form_id, $form_state_aux);  
+}
+
+/**
+ * Submit function used to deal with the user data
+ */
+function _propiedad_form_alters_user_submit($form, &$form_state) {
+  // Process the creation of the user using the drupal_execute function. This is
+  // the preferred way over user_save function, because of all the implicit messaging
+  // and processing involved, and to prevent replicate that code here
+  $form_id = 'user_register';
+  $form_state_aux = array();
+
+  $form_state_aux['values']['mail'] = $_POST['mail'];
+  $form_state_aux['values']['name'] = $_POST['name'];
+  $form_state_aux['values']['pass'] = $_POST['pass']['pass1'];
+  $form_state_aux['values']['timezone'] = $_POST['timezone'];
+
+  $form_state_aux['values']['op'] = $_POST['op'];
+  $form_state_aux['submitted'] = TRUE;  // Set to ensure the form will be submitted at this step
+    
+  // Do the validation of user data
+  drupal_execute($form_id, $form_state_aux);  
+  
+  // Load the global user, that now is the recently created one
+  global $user;
+  $new_user = $user;
+  
+  // Deal with profile CT nodes creation
+  foreach (content_profile_get_types('names', 'registration_use') as $type => $type_name) {
+    // At this point, all the validation has happened sucessfully. It's time to create
+    // the profile nodes. drupal_execute is not used, in favor of node_save, who proves to be
+    // easier to use.
+    // Basic node info is set, also with some aditional items
+    $node = array(
+      'type' => $type,
+      'uid' => $new_user->uid,
+      'language' => $form_state['node']['language'],
+    );
+
+    switch ($type) {
+      case 'facturacion':
+        $post_item = 'group_datos_facturacion';
+
+        break;
+
+      case 'contacto_publicacion':
+        $post_item = 'group_datos_contacto_publicacion';
+
+        break;
+      
+      default:
+        continue;
+    }
+    
+    foreach ($_POST[$post_item] as $key => $value) {
+      $node[$key] = $value;
+      $form_state_aux['values'][$key] = $value;
+    }
+    
+    $node = (object)$node;
+    node_save($node);    
+  }
+  
+  // The uid of the node to be created is updated to use the new user uid
+  $form_state['values']['uid'] = $new_user->uid;  
+}
+
+/**
+ * Function to process the form after has been built. This is used to fix some
+ * stuff related with the field field_tamanio_construccion and problems when used
+ * as a conditional field
+ */
+function _propiedad_form_alters_field_tamanio_construccion_fixes($form, &$form_state) {
+  // Add some js, necessary to fix some misbehavior related to the conditional fields
+  drupal_add_js(drupal_get_path('module', 'propiedad_form_alters') . '/js/field_tamanio_construccion_conditional_fixes.js');
+  
+  // Add a validation function to the form to fix some requirement stuff related with
+  // the field when has no values. It's added at the beginning, so the fixes could
+  // happen before any other validate function. This doesn't warranty that this validation
+  // function will happen first, but, at least, this could happen before node_form_validate,
+  // that is the one that we want to tackle
+  array_unshift($form['#validate'], '_propiedad_form_alters_field_tamanio_construccion_validate');
+  
+  return $form;  
+}
+
+/**
+ * Validation function to fix some validation requirements in the field field_tamanio_construccion
+ * under certain circumstances
+ */
+function _propiedad_form_alters_field_tamanio_construccion_validate(&$form, &$form_state){
+  // Check the values of the field field_tamanio_construccion, to work with it
+  // in function of the values it has
+  $field = $form_state['values']['field_tamanio_construccion'][0];
+  
+  if(empty($field['value']) && empty($field['unit'])){
+    // Unset a value, to prevent further checks on this field, that could lead
+    // to error messages
+    unset($form_state['values']['field_tamanio_construccion']);
+  }
+}
+
+/**
+ * Theme function for the propiedad form creation
+ */
+function theme_propiedad_node_form($form){
+  // Add some js necessary to do some visual validation
+  $path = drupal_get_path('module', 'propiedad_form_alters');
+  drupal_add_js($path . '/js/publish_button_anon.js');
+  
+  // Remove unnecessary stuff
+  unset($form['group_datos']['#title']);
+    
+  // Adjust stuff
+  $form['buttons']['#weight'] = 100;
+  
+  // Tabs Creation
+  $form['tabset'] = array(
+    '#type' => 'tabset',
+    '#description' => drupal_render($form['field_plan_reference']),
+  );
+  unset($form['field_plan_reference']);
+
+  // Load of items for the tabs with info about user registration
+  if($form['user_data']){
+    foreach(element_children($form['user_data']) as $key) {
+      $form['tabset'][$key] = array(
+        '#type' => 'tabpage',
+        '#title' => $form['user_data'][$key]['#title'],
+        '#tab_name' => $key,
+      );
+      
+      unset($form['user_data'][$key]['#title']);
+      $form['tabset'][$key][$key] = $form['user_data'][$key];
+    }
+    
+    unset($form['user_data']);
+  }
+
+  // Load of items for the tab with the first group of data for the property
+  $form['tabset']['property_required'] = array(
+    '#type' => 'tabpage',
+    '#title' => t('Required Data'),
+    '#tab_name' => 'required_data',
+    '#description' => drupal_render($form['field_desc_datos_1']),
+  );
+  unset($form['field_desc_datos_1']);
+  
+  // Move of form elements to the tabs
+  $items = array(
+    'title',
+    'field_precio',
+    'field_ciudad_sector',
+    'group_datos',
+    'field_tamanio_propiedad',
+    'field_tamanio_construccion',
+    'field_direccion',
+    'field_foto',
+    'locations',
+  );
+  
+  foreach ($items as $value) {
+    $form['tabset']['property_required'][$value] = $form[$value];
+    
+    if($value == 'locations'){
+      unset($form['tabset']['property_required'][$value][0]['locpick']['instructions']);
+      unset($form['tabset']['property_required'][$value][0]['locpick']['map_instructions']);
+    }
+    unset($form[$value]);  
+  }
+
+  // Load of items for the tab with the second group of data for the property
+  $form['tabset']['property_optional'] = array(
+    '#type' => 'tabpage',
+    '#title' => t('Optional Data'),
+    '#tab_name' => 'optional_data',
+    '#description' => drupal_render($form['field_desc_datos_2']),
+  );
+  unset($form['field_desc_datos_2']);
+  
+  // Move of form elements to the tabs
+  $items = array(
+    'field_ambientes',
+    'field_video_ref',
+    'body_field',
+  );
+  foreach ($items as $value) {
+    $form['tabset']['property_optional'][$value] = $form[$value];
+    unset($form[$value]);  
+  }
+  
+  // Loop through the tab pages to set correct weights
+  $cont = 0;
+  foreach (element_children($form['tabset']) as $key) {
+    $form['tabset'][$key]['#weight'] = $cont++;
+    
+    if($key == 'datos_facturacion'){
+      $form['tabset'][$key]['#weight'] = 100;
+    }
+  }
+  
+  // Call to hook_theme_propiedad_node_form_alter implementations
+  drupal_alter('theme_propiedad_node_form', $form);
+  
+  // Render the form
+  return drupal_render($form);
+}
+
+/**
+ * Pre-Render function used to set some wrapper fixes to the form
+ */
+function _propiedad_form_alters_fix_wrapper($form){
+  $form['#attributes']['class'] = 'create-propiedad';
+  $form['#attributes']['class'] = trim($form['#attributes']['class']);
+  
+  return $form;
+}
+
+/**
+ * Theme function for the propiedad foto field, to be used when loaded in an ahah
+ * process
+ */
+function theme_propiedad_form_alters_foto_field($element){
+  // Code used just to add some stuff to the default theming function. This is 
+  // some js code, needed to tackle the limitations that appeared because of the
+  // (from my perspective) deficient coding way of the add item when creating a new
+  // one, implemented with ahah processes
+  $rand = rand();
+  
+  $output = '<script type="text/javascript">' . 
+              'Drupal.settings.propiedad_form_alters = {"HierarchicalSelect" : {"settings" : Drupal.settings.HierarchicalSelect.settings}};' .
+              'setTimeout(function() { Drupal.settings.HierarchicalSelect.settings = Drupal.settings.propiedad_form_alters.HierarchicalSelect.settings; }, 1000);' .
+            '</script>';
+  
+  // Call to the original theme function
+  $output .= theme($element['#__original_theme_function'], $element);
+  
+  return $output;
+}
+
+/**
+ * Implementation of hook_nodeapi
+ */
+function propiedad_form_alters_nodeapi(&$node, $op, $a3 = NULL, $a4 = NULL) {
+  // Act just in the correct node type
+  if($node->type != 'propiedad'){
+    return;
+  }  
+  
+  // Different behavior for the different operations
+  switch ($op) {
+    case 'load':  // do slight modifications to the title
+      $extra = '';
+      
+      foreach (array_reverse($node->field_ciudad_sector) as $item) {
+        $term = taxonomy_get_term($item['value']);
+        
+        if($extra == ''){
+          $extra .= $term->name;
+        } else {
+          $extra .= ' (' . $term->name . ')';
+        }
+      }
+      
+      if($extra != ''){
+        $element = array(
+          '#type' => 'item',
+          '#title' => t('Cod'),
+          '#value' => $node->nid,
+          '#prefix' => '<div class="code">',
+          '#suffix' => '</div>',
+        );
+        
+        // Add the code to the title
+        $extra .= drupal_render($element);;
+        
+        // Change title, and save old version
+        $node->title_old = $node->title;
+        $node->title .= ', ' . $extra;
+      }
+      break;
+      
+    case 'prepare': // return the title to it's original state
+      if(isset($node->title_old)){
+        $node->title = $node->title_old;
+      }
+      
+      break;
+      
+//    case 'delete':  // Remove any proyecto-propiedad node associated
+//      if(isset($node->field_propiedad[0]['nid'])){
+//        node_delete($node->field_propiedad[0]['nid']);
+//      }
+//
+//      break; 
+          
+  }
+}

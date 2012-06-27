@@ -1,0 +1,17 @@
+<?php
+// $Id: $
+
+/**
+ * Implementation of hook_init().
+ */
+function correct_admin_bar_init() {
+  if(module_exists('admin') && module_exists('admin_menu')){
+    if(user_access('use admin toolbar') && user_access('access administration menu')){
+      $pos = substr(admin_get_settings('position'), 0, 1);
+
+      if(variable_get('admin_menu_position_fixed', 0) && $pos == 'n'){
+        drupal_add_css(drupal_get_path('module', 'correct_admin_bar') . '/correct_admin_bar.css');
+      }
+    }
+  }
+}

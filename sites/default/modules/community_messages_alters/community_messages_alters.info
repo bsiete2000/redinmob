@@ -1,0 +1,8 @@
+; $Id:  $
+name = Community Messages Alters
+description = Alterations to the Community Messages stuff, to adjust to diverse scenarios
+
+dependencies[] = ahah_helper
+
+package = RedInmobiliaria
+core = "6.x"

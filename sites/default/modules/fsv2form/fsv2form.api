@@ -1,0 +1,22 @@
+<?php
+// $Id: $
+
+/**
+ * Definition of the hook_fsv2form
+ * This hook doesn't return any value. It's purpouse is to modify the $elements
+ * array (from $form) using the $value item (extracted from $form_state). $keys are the
+ * key values to reference items in $values, and $field_name, that is the name 
+ * of the currently treated field
+ */
+function hook_fsv2form(&$elements, $value, $keys, $field_name){
+  
+}
+
+/**
+ * Definition of the hook_fsv2form_FIELD_NAME
+ * This hook is the same as the one above, with the difference that this is applied
+ * to a particular field only
+ */
+function hook_fsv2form_FIELD_NAME(&$elements, $value, $keys){
+  
+}

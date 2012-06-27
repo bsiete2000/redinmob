@@ -1,0 +1,8 @@
+; $Id:  $
+name = Private Messages Alters
+description = Alterations to the Private Messages stuff, to adjust to diverse scenarios
+
+;dependencies[] = <insert module name here>
+
+package = RedInmobiliaria
+core = "6.x"

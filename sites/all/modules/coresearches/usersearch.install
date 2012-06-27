@@ -1,0 +1,6 @@
+<?php
+// $Id: usersearch.install,v 1.1.2.1 2008/07/07 12:00:54 robertDouglass Exp $   
+
+function usersearch_install() {
+  db_query("UPDATE {system} SET weight = 5 WHERE name = 'usersearch'");
+}

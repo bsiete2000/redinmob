@@ -1,0 +1,513 @@
+? d6.kpf
+? sites
+Index: modules/node/node.module
+===================================================================
+RCS file: /cvs/drupal/drupal/modules/node/node.module,v
+retrieving revision 1.947.2.11
+diff -u -p -r1.947.2.11 node.module
+--- modules/node/node.module	25 Jun 2008 08:59:57 -0000	1.947.2.11
++++ modules/node/node.module	12 Jul 2008 01:31:30 -0000
+@@ -73,9 +73,6 @@ function node_theme() {
+     'node_list' => array(
+       'arguments' => array('items' => NULL, 'title' => NULL),
+     ),
+-    'node_search_admin' => array(
+-      'arguments' => array('form' => NULL),
+-    ),
+     'node_filter_form' => array(
+       'arguments' => array('form' => NULL),
+       'file' => 'node.admin.inc',
+@@ -972,10 +969,6 @@ function node_delete($nid) {
+     // Clear the page and block caches.
+     cache_clear_all();
+ 
+-    // Remove this node from the search index if needed.
+-    if (function_exists('search_wipe')) {
+-      search_wipe($node->nid, 'node');
+-    }
+     watchdog('content', '@type: deleted %title.', array('@type' => $node->type, '%title' => $node->title));
+     drupal_set_message(t('@type %title has been deleted.', array('@type' => node_get_types('name', $node), '%title' => $node->title)));
+   }
+@@ -1136,173 +1129,6 @@ function node_perm() {
+ }
+ 
+ /**
+- * Implementation of hook_search().
+- */
+-function node_search($op = 'search', $keys = NULL) {
+-  switch ($op) {
+-    case 'name':
+-      return t('Content');
+-
+-    case 'reset':
+-      db_query("UPDATE {search_dataset} SET reindex = %d WHERE type = 'node'", time());
+-      return;
+-
+-    case 'status':
+-      $total = db_result(db_query('SELECT COUNT(*) FROM {node} WHERE status = 1'));
+-      $remaining = db_result(db_query("SELECT COUNT(*) FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE n.status = 1 AND (d.sid IS NULL OR d.reindex <> 0)"));
+-      return array('remaining' => $remaining, 'total' => $total);
+-
+-    case 'admin':
+-      $form = array();
+-      // Output form for defining rank factor weights.
+-      $form['content_ranking'] = array(
+-        '#type' => 'fieldset',
+-        '#title' => t('Content ranking'),
+-      );
+-      $form['content_ranking']['#theme'] = 'node_search_admin';
+-      $form['content_ranking']['info'] = array(
+-        '#value' => '<em>'. t('The following numbers control which properties the content search should favor when ordering the results. Higher numbers mean more influence, zero means the property is ignored. Changing these numbers does not require the search index to be rebuilt. Changes take effect immediately.') .'</em>'
+-      );
+-
+-      $ranking = array('node_rank_relevance' => t('Keyword relevance'),
+-                       'node_rank_recent' => t('Recently posted'));
+-      if (module_exists('comment')) {
+-        $ranking['node_rank_comments'] = t('Number of comments');
+-      }
+-      if (module_exists('statistics') && variable_get('statistics_count_content_views', 0)) {
+-        $ranking['node_rank_views'] = t('Number of views');
+-      }
+-
+-      // Note: reversed to reflect that higher number = higher ranking.
+-      $options = drupal_map_assoc(range(0, 10));
+-      foreach ($ranking as $var => $title) {
+-        $form['content_ranking']['factors'][$var] = array(
+-          '#title' => $title,
+-          '#type' => 'select',
+-          '#options' => $options,
+-          '#default_value' => variable_get($var, 5),
+-        );
+-      }
+-      return $form;
+-
+-    case 'search':
+-      // Build matching conditions
+-      list($join1, $where1) = _db_rewrite_sql();
+-      $arguments1 = array();
+-      $conditions1 = 'n.status = 1';
+-
+-      if ($type = search_query_extract($keys, 'type')) {
+-        $types = array();
+-        foreach (explode(',', $type) as $t) {
+-          $types[] = "n.type = '%s'";
+-          $arguments1[] = $t;
+-        }
+-        $conditions1 .= ' AND ('. implode(' OR ', $types) .')';
+-        $keys = search_query_insert($keys, 'type');
+-      }
+-
+-      if ($category = search_query_extract($keys, 'category')) {
+-        $categories = array();
+-        foreach (explode(',', $category) as $c) {
+-          $categories[] = "tn.tid = %d";
+-          $arguments1[] = $c;
+-        }
+-        $conditions1 .= ' AND ('. implode(' OR ', $categories) .')';
+-        $join1 .= ' INNER JOIN {term_node} tn ON n.vid = tn.vid';
+-        $keys = search_query_insert($keys, 'category');
+-      }
+-
+-      // Build ranking expression (we try to map each parameter to a
+-      // uniform distribution in the range 0..1).
+-      $ranking = array();
+-      $arguments2 = array();
+-      $join2 = '';
+-      // Used to avoid joining on node_comment_statistics twice
+-      $stats_join = FALSE;
+-      $total = 0;
+-      if ($weight = (int)variable_get('node_rank_relevance', 5)) {
+-        // Average relevance values hover around 0.15
+-        $ranking[] = '%d * i.relevance';
+-        $arguments2[] = $weight;
+-        $total += $weight;
+-      }
+-      if ($weight = (int)variable_get('node_rank_recent', 5)) {
+-        // Exponential decay with half-life of 6 months, starting at last indexed node
+-        $ranking[] = '%d * POW(2, (GREATEST(MAX(n.created), MAX(n.changed), MAX(c.last_comment_timestamp)) - %d) * 6.43e-8)';
+-        $arguments2[] = $weight;
+-        $arguments2[] = (int)variable_get('node_cron_last', 0);
+-        $join2 .= ' LEFT JOIN {node_comment_statistics} c ON c.nid = i.sid';
+-        $stats_join = TRUE;
+-        $total += $weight;
+-      }
+-      if (module_exists('comment') && $weight = (int)variable_get('node_rank_comments', 5)) {
+-        // Inverse law that maps the highest reply count on the site to 1 and 0 to 0.
+-        $scale = variable_get('node_cron_comments_scale', 0.0);
+-        $ranking[] = '%d * (2.0 - 2.0 / (1.0 + MAX(c.comment_count) * %f))';
+-        $arguments2[] = $weight;
+-        $arguments2[] = $scale;
+-        if (!$stats_join) {
+-          $join2 .= ' LEFT JOIN {node_comment_statistics} c ON c.nid = i.sid';
+-        }
+-        $total += $weight;
+-      }
+-      if (module_exists('statistics') && variable_get('statistics_count_content_views', 0) &&
+-          $weight = (int)variable_get('node_rank_views', 5)) {
+-        // Inverse law that maps the highest view count on the site to 1 and 0 to 0.
+-        $scale = variable_get('node_cron_views_scale', 0.0);
+-        $ranking[] = '%d * (2.0 - 2.0 / (1.0 + MAX(nc.totalcount) * %f))';
+-        $arguments2[] = $weight;
+-        $arguments2[] = $scale;
+-        $join2 .= ' LEFT JOIN {node_counter} nc ON nc.nid = i.sid';
+-        $total += $weight;
+-      }
+-      
+-      // When all search factors are disabled (ie they have a weight of zero), 
+-      // the default score is based only on keyword relevance and there is no need to 
+-      // adjust the score of each item. 
+-      if ($total == 0) {
+-        $select2 = 'i.relevance AS score';
+-        $total = 1;
+-      }
+-      else {
+-        $select2 = implode(' + ', $ranking) . ' AS score';
+-      }
+-      
+-      // Do search.
+-      $find = do_search($keys, 'node', 'INNER JOIN {node} n ON n.nid = i.sid '. $join1, $conditions1 . (empty($where1) ? '' : ' AND '. $where1), $arguments1, $select2, $join2, $arguments2);
+-
+-      // Load results.
+-      $results = array();
+-      foreach ($find as $item) {
+-        // Build the node body.
+-        $node = node_load($item->sid);
+-        $node->build_mode = NODE_BUILD_SEARCH_RESULT;
+-        $node = node_build_content($node, FALSE, FALSE);
+-        $node->body = drupal_render($node->content);
+-
+-        // Fetch comments for snippet.
+-        $node->body .= module_invoke('comment', 'nodeapi', $node, 'update index');
+-        // Fetch terms for snippet.
+-        $node->body .= module_invoke('taxonomy', 'nodeapi', $node, 'update index');
+-
+-        $extra = node_invoke_nodeapi($node, 'search result');
+-        $results[] = array(
+-          'link' => url('node/'. $item->sid, array('absolute' => TRUE)),
+-          'type' => check_plain(node_get_types('name', $node)),
+-          'title' => $node->title,
+-          'user' => theme('username', $node),
+-          'date' => $node->changed,
+-          'node' => $node,
+-          'extra' => $extra,
+-          'score' => $item->score / $total,
+-          'snippet' => search_excerpt($keys, $node->body),
+-        );
+-      }
+-      return $results;
+-  }
+-}
+-
+-/**
+  * Implementation of hook_user().
+  */
+ function node_user($op, &$edit, &$user) {
+@@ -1313,28 +1139,6 @@ function node_user($op, &$edit, &$user) 
+ }
+ 
+ /**
+- * Theme the content ranking part of the search settings admin page.
+- *
+- * @ingroup themeable
+- */
+-function theme_node_search_admin($form) {
+-  $output = drupal_render($form['info']);
+-
+-  $header = array(t('Factor'), t('Weight'));
+-  foreach (element_children($form['factors']) as $key) {
+-    $row = array();
+-    $row[] = $form['factors'][$key]['#title'];
+-    unset($form['factors'][$key]['#title']);
+-    $row[] = drupal_render($form['factors'][$key]);
+-    $rows[] = $row;
+-  }
+-  $output .= theme('table', $header, $rows);
+-
+-  $output .= drupal_render($form);
+-  return $output;
+-}
+-
+-/**
+  * Retrieve the comment mode for the given node ID (none, read, or read/write).
+  */
+ function node_comment_mode($nid) {
+@@ -1772,159 +1576,6 @@ function node_page_view($node, $cid = NU
+ }
+ 
+ /**
+- * Implementation of hook_update_index().
+- */
+-function node_update_index() {
+-  $limit = (int)variable_get('search_cron_limit', 100);
+-
+-  // Store the maximum possible comments per thread (used for ranking by reply count)
+-  variable_set('node_cron_comments_scale', 1.0 / max(1, db_result(db_query('SELECT MAX(comment_count) FROM {node_comment_statistics}'))));
+-  variable_set('node_cron_views_scale', 1.0 / max(1, db_result(db_query('SELECT MAX(totalcount) FROM {node_counter}'))));
+-
+-  $result = db_query_range("SELECT n.nid FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE d.sid IS NULL OR d.reindex <> 0 ORDER BY d.reindex ASC, n.nid ASC", 0, $limit);
+-
+-  while ($node = db_fetch_object($result)) {
+-    _node_index_node($node);
+-  }
+-}
+-
+-/**
+- * Index a single node.
+- *
+- * @param $node
+- *   The node to index.
+- */
+-function _node_index_node($node) {
+-  $node = node_load($node->nid);
+-
+-  // save the changed time of the most recent indexed node, for the search results half-life calculation
+-  variable_set('node_cron_last', $node->changed);
+-
+-  // Build the node body.
+-  $node->build_mode = NODE_BUILD_SEARCH_INDEX;
+-  $node = node_build_content($node, FALSE, FALSE);
+-  $node->body = drupal_render($node->content);
+-
+-  $text = '<h1>'. check_plain($node->title) .'</h1>'. $node->body;
+-
+-  // Fetch extra data normally not visible
+-  $extra = node_invoke_nodeapi($node, 'update index');
+-  foreach ($extra as $t) {
+-    $text .= $t;
+-  }
+-
+-  // Update index
+-  search_index($node->nid, 'node', $text);
+-}
+-
+-/**
+- * Implementation of hook_form_alter().
+- */
+-function node_form_alter(&$form, $form_state, $form_id) {
+-  // Advanced node search form
+-  if ($form_id == 'search_form' && $form['module']['#value'] == 'node' && user_access('use advanced search')) {
+-    // Keyword boxes:
+-    $form['advanced'] = array(
+-      '#type' => 'fieldset',
+-      '#title' => t('Advanced search'),
+-      '#collapsible' => TRUE,
+-      '#collapsed' => TRUE,
+-      '#attributes' => array('class' => 'search-advanced'),
+-    );
+-    $form['advanced']['keywords'] = array(
+-      '#prefix' => '<div class="criterion">',
+-      '#suffix' => '</div>',
+-    );
+-    $form['advanced']['keywords']['or'] = array(
+-      '#type' => 'textfield',
+-      '#title' => t('Containing any of the words'),
+-      '#size' => 30,
+-      '#maxlength' => 255,
+-    );
+-    $form['advanced']['keywords']['phrase'] = array(
+-      '#type' => 'textfield',
+-      '#title' => t('Containing the phrase'),
+-      '#size' => 30,
+-      '#maxlength' => 255,
+-    );
+-    $form['advanced']['keywords']['negative'] = array(
+-      '#type' => 'textfield',
+-      '#title' => t('Containing none of the words'),
+-      '#size' => 30,
+-      '#maxlength' => 255,
+-    );
+-
+-    // Taxonomy box:
+-    if ($taxonomy = module_invoke('taxonomy', 'form_all', 1)) {
+-      $form['advanced']['category'] = array(
+-        '#type' => 'select',
+-        '#title' => t('Only in the category(s)'),
+-        '#prefix' => '<div class="criterion">',
+-        '#size' => 10,
+-        '#suffix' => '</div>',
+-        '#options' => $taxonomy,
+-        '#multiple' => TRUE,
+-      );
+-    }
+-
+-    // Node types:
+-    $types = array_map('check_plain', node_get_types('names'));
+-    $form['advanced']['type'] = array(
+-      '#type' => 'checkboxes',
+-      '#title' => t('Only of the type(s)'),
+-      '#prefix' => '<div class="criterion">',
+-      '#suffix' => '</div>',
+-      '#options' => $types,
+-    );
+-    $form['advanced']['submit'] = array(
+-      '#type' => 'submit',
+-      '#value' => t('Advanced search'),
+-      '#prefix' => '<div class="action">',
+-      '#suffix' => '</div>',
+-    );
+-
+-    $form['#validate'][] = 'node_search_validate';
+-  }
+-}
+-
+-/**
+- * Form API callback for the search form. Registered in node_form_alter().
+- */
+-function node_search_validate($form, &$form_state) {
+-  // Initialise using any existing basic search keywords.
+-  $keys = $form_state['values']['processed_keys'];
+-
+-  // Insert extra restrictions into the search keywords string.
+-  if (isset($form_state['values']['type']) && is_array($form_state['values']['type'])) {
+-    // Retrieve selected types - Forms API sets the value of unselected checkboxes to 0.
+-    $form_state['values']['type'] = array_filter($form_state['values']['type']);
+-    if (count($form_state['values']['type'])) {
+-      $keys = search_query_insert($keys, 'type', implode(',', array_keys($form_state['values']['type'])));
+-    }
+-  }
+-
+-  if (isset($form_state['values']['category']) && is_array($form_state['values']['category'])) {
+-    $keys = search_query_insert($keys, 'category', implode(',', $form_state['values']['category']));
+-  }
+-  if ($form_state['values']['or'] != '') {
+-    if (preg_match_all('/ ("[^"]+"|[^" ]+)/i', ' '. $form_state['values']['or'], $matches)) {
+-      $keys .= ' '. implode(' OR ', $matches[1]);
+-    }
+-  }
+-  if ($form_state['values']['negative'] != '') {
+-    if (preg_match_all('/ ("[^"]+"|[^" ]+)/i', ' '. $form_state['values']['negative'], $matches)) {
+-      $keys .= ' -'. implode(' -', $matches[1]);
+-    }
+-  }
+-  if ($form_state['values']['phrase'] != '') {
+-    $keys .= ' "'. str_replace('"', ' ', $form_state['values']['phrase']) .'"';
+-  }
+-  if (!empty($keys)) {
+-    form_set_value($form['basic']['inline']['processed_keys'], trim($keys), $form_state);
+-  }
+-}
+-
+-/**
+  * @defgroup node_access Node access rights
+  * @{
+  * The node access system determines who can do what to which nodes.
+Index: modules/search/search.module
+===================================================================
+RCS file: /cvs/drupal/drupal/modules/search/search.module,v
+retrieving revision 1.250.2.2
+diff -u -p -r1.250.2.2 search.module
+--- modules/search/search.module	9 Apr 2008 21:11:49 -0000	1.250.2.2
++++ modules/search/search.module	12 Jul 2008 01:31:31 -0000
+@@ -1078,7 +1078,8 @@
+  */
+ function search_box_form_submit($form, &$form_state) {
+   $form_id = $form['form_id']['#value'];
+-  $form_state['redirect'] = 'search/node/'. trim($form_state['values'][$form_id]);
++  $type = array_shift(module_implements('search'));
++  $form_state['redirect'] = "search/$type/". trim($form_state['values'][$form_id]);
+ }
+ 
+ /**
+@@ -1138,7 +1139,10 @@
+ /**
+  * Perform a standard search on the given keys, and return the formatted results.
+  */
+-function search_data($keys = NULL, $type = 'node') {
++function search_data($keys = NULL, $type = NULL) {
++  if (is_null($type)) {
++    $type = array_shift(module_implements('search'));
++  }
+ 
+   if (isset($keys)) {
+     if (module_hook($type, 'search')) {
+Index: modules/search/search.pages.inc
+===================================================================
+RCS file: /cvs/drupal/drupal/modules/search/search.pages.inc,v
+retrieving revision 1.4
+diff -u -p -r1.4 search.pages.inc
+--- modules/search/search.pages.inc	6 Dec 2007 09:51:01 -0000	1.4
++++ modules/search/search.pages.inc	12 Jul 2008 01:31:31 -0000
+@@ -9,16 +9,23 @@
+ /**
+  * Menu callback; presents the search form and/or search results.
+  */
+-function search_view($type = 'node') {
++function search_view($type = '') {
+   // Search form submits with POST but redirects to GET. This way we can keep
+   // the search query URL clean as a whistle:
+   // search/type/keyword+keyword
+   if (!isset($_POST['form_id'])) {
+     if ($type == '') {
+-      // Note: search/node can not be a default tab because it would take on the
++      // Note: search/contentsearch can not be a default tab because it would take on the
+       // path of its parent (search). It would prevent remembering keywords when
+       // switching tabs. This is why we drupal_goto to it from the parent instead.
+-      drupal_goto('search/node');
++      $modules = module_implements('search');
++      if ($default = array_shift($modules)) {
++        drupal_goto('search/'. $default);
++      }
++      else {
++        drupal_set_message(t('There are no search modules enabled.'), 'error');
++        return '';
++      }
+     }
+ 
+     $keys = search_get_keys();
+@@ -124,7 +133,9 @@ function search_form_submit($form, &$for
+     // Fall through to the drupal_goto() call.
+   }
+ 
+-  $type = $form_state['values']['module'] ? $form_state['values']['module'] : 'node';
++  $default_type = array_shift(module_implements('search'));
++  $type = $form_state['values']['module'] ? $form_state['values']['module'] : $default_type;
++  
+   $form_state['redirect'] = 'search/'. $type .'/'. $keys;
+   return;
+ }
+Index: modules/user/user.module
+===================================================================
+RCS file: /cvs/drupal/drupal/modules/user/user.module,v
+retrieving revision 1.892.2.5
+diff -u -p -r1.892.2.5 user.module
+--- modules/user/user.module	9 Jul 2008 21:48:28 -0000	1.892.2.5
++++ modules/user/user.module	12 Jul 2008 01:31:31 -0000
+@@ -557,38 +557,6 @@ function user_file_download($file) {
+ }
+ 
+ /**
+- * Implementation of hook_search().
+- */
+-function user_search($op = 'search', $keys = NULL, $skip_access_check = FALSE) {
+-  switch ($op) {
+-    case 'name':
+-      if ($skip_access_check || user_access('access user profiles')) {
+-        return t('Users');
+-      }
+-    case 'search':
+-      if (user_access('access user profiles')) {
+-        $find = array();
+-        // Replace wildcards with MySQL/PostgreSQL wildcards.
+-        $keys = preg_replace('!\*+!', '%', $keys);
+-        if (user_access('administer users')) {
+-          // Administrators can also search in the otherwise private email field.
+-          $result = pager_query("SELECT name, uid, mail FROM {users} WHERE LOWER(name) LIKE LOWER('%%%s%%') OR LOWER(mail) LIKE LOWER('%%%s%%')", 15, 0, NULL, $keys, $keys);
+-          while ($account = db_fetch_object($result)) {
+-            $find[] = array('title' => $account->name .' ('. $account->mail .')', 'link' => url('user/'. $account->uid, array('absolute' => TRUE)));
+-          }
+-        }
+-        else {
+-          $result = pager_query("SELECT name, uid FROM {users} WHERE LOWER(name) LIKE LOWER('%%%s%%')", 15, 0, NULL, $keys);
+-          while ($account = db_fetch_object($result)) {
+-            $find[] = array('title' => $account->name, 'link' => url('user/'. $account->uid, array('absolute' => TRUE)));
+-          }
+-        }
+-        return $find;
+-      }
+-  }
+-}
+-
+-/**
+  * Implementation of hook_elements().
+  */
+ function user_elements() {

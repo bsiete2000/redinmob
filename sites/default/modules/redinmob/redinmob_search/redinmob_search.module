@@ -1,0 +1,1647 @@
+<?php
+
+///**
+// * Implementation of hook_menu().
+// */
+//function apachesolr_search_menu() {
+//  $items['admin/settings/apachesolr/query-fields'] = array(
+//    'title'            => 'Search fields',
+//    'page callback'    => 'apachesolr_search_settings_page',
+//    'access arguments' => array('administer search'),
+//    'weight'           => 1,
+//    'type'             => MENU_LOCAL_TASK,
+//    'file'             => 'apachesolr_search.admin.inc',
+//  );
+//  $items['admin/settings/apachesolr/content-bias'] = array(
+//    'title'            => 'Content bias settings',
+//    'page callback'    => 'apachesolr_boost_settings_page',
+//    'access arguments' => array('administer search'),
+//    'weight'           => 1,
+//    'type'             => MENU_LOCAL_TASK,
+//    'file'             => 'apachesolr_search.admin.inc',
+//  );
+//
+//  return $items;
+//}
+
+/**
+ * Implementation of hook_menu_alter().
+ */
+function redinmob_search_menu_alter(&$menu) {
+  if (isset($menu['search/redinmob_search/%menu_tail'])) {
+    $menu['search']['page callback'] = 'redinmob_search_view';
+    $menu['search/redinmob_search/%menu_tail']['page callback'] = 'redinmob_search_view';
+    $menu['search/redinmob_search/%menu_tail']['weight'] = -10;
+    
+    $menu['search/apachesolr_search/%menu_tail']['type'] = MENU_CALLBACK;
+  }
+//  if (variable_get('apachesolr_search_make_default', 0)) {
+//    if (isset($menu['search/node/%menu_tail'])) {
+//      // Hide the node search tab.
+//      $menu['search/node/%menu_tail']['type'] = MENU_CALLBACK;
+//      unset($menu['search/node/%menu_tail']['title callback'], $menu['search/node/%menu_tail']['title arguments']);
+//      $menu['search/node/%menu_tail']['title'] = 'Search';
+//    }
+//    if (isset($menu['search/apachesolr_search/%menu_tail'])) {
+//      // Alter the solr search tab
+//      $menu['search/apachesolr_search/%menu_tail']['weight'] = -10;
+//      unset($menu['search/apachesolr_search/%menu_tail']['title callback'], $menu['search/apachesolr_search/%menu_tail']['title arguments']);
+//      $menu['search/apachesolr_search/%menu_tail']['title'] = 'Content';
+//    }
+//  }
+//  if (variable_get('apachesolr_search_taxonomy_links', 0)) {
+//    if (isset($menu['taxonomy/term/%'])) {
+//      $menu['taxonomy/term/%']['module'] = 'apachesolr_search';
+//      $menu['taxonomy/term/%']['page callback'] = 'apachesolr_search_taxonomy_term_page';
+//      $menu['taxonomy/term/%']['file path'] = drupal_get_path('module', 'apachesolr_search');
+//      $menu['taxonomy/term/%']['file'] = 'apachesolr.taxonomy.inc';
+//    }
+//  }
+}
+
+//
+///**
+// * Implementation of hook_update_index().
+// */
+//function apachesolr_search_update_index() {
+//  $cron_limit = variable_get('apachesolr_cron_limit', 50);
+//  $rows = apachesolr_get_nodes_to_index('apachesolr_search', $cron_limit);
+//  apachesolr_index_nodes($rows, 'apachesolr_search');
+//}
+//
+///**
+// * Implementation of hook_apachesolr_types_exclude().
+// */
+//function apachesolr_search_apachesolr_types_exclude($namespace) {
+//  if ($namespace == 'apachesolr_search') {
+//    $excluded_types = variable_get('apachesolr_search_excluded_types', array());
+//    return array_filter($excluded_types);
+//  }
+//}
+
+/**
+ * Implementation of hook_search().
+ */
+function redinmob_search_search($op = 'search', $keys = NULL) {
+
+  switch ($op) {
+    case 'name':
+      return t('Search');
+
+//    case 'reset':
+//      apachesolr_clear_last_index('apachesolr_search');
+//      return;
+//
+//    case 'status':
+//      return apachesolr_index_status('apachesolr_search');
+
+    case 'search':
+      // Convert received keys (which comes with filters too) into some usable
+      // to ApacheSolr
+      $keys_data = $keys['keys'];
+      $filterstring = $keys['filters'];
+      
+      // Get additional data, to use in the search
+      $solrsort = isset($_GET['solrsort']) ? $_GET['solrsort'] : '';
+      $page = isset($_GET['page']) ? $_GET['page'] : 0;
+
+      try {
+        $results = redinmob_search_execute($keys_data, $filterstring, $solrsort, 'search/' . arg(1), $page);
+
+        return $results;
+      }
+      catch (Exception $e) {
+        watchdog('Apache Solr', nl2br(check_plain($e->getMessage())), NULL, WATCHDOG_ERROR);
+        apachesolr_failure(t('Solr search'), $keys);
+      }
+      
+      break;      
+  } // switch
+}
+
+/**
+ * Implementation of hook_apachesolr_cck_fields_alter().
+ */
+function redinmob_search_apachesolr_cck_fields_alter(&$mappings) {
+  // Create mappings for other field types
+  $mappings['content_taxonomy']['content_taxonomy_select'] = array(
+    'callback' => '_redinmob_search_apachesolr_cck_content_taxonomy_content_taxonomy_select',
+    'index_type' => 'string',
+  );
+  
+  $mappings['content_taxonomy']['content_taxonomy_hs'] = array(
+    'callback' => '_redinmob_search_apachesolr_cck_content_taxonomy_content_taxonomy_hs',
+    'index_type' => 'string',
+  );
+  
+  $mappings['computed']['computed'] = array(
+    'callback' => '',
+    'index_type' => 'string',
+  );
+  
+  $mappings['formatted_decimal']['formatted_number'] = array(
+    'callback' => '',
+    'index_type' => 'float',
+  );  
+}
+
+/**
+ * Re-implementation of search_view().
+ */
+function redinmob_search_view($type = NULL) {
+  $results = '';
+
+  // We did not redirect, so run the search if needed.
+  $keys = trim(search_get_keys());
+  $data_search['keys'] = $keys;
+
+  if(isset($_GET['filters'])) {
+    $filters = base64_decode($_GET['filters']);
+    $data_search['filters'] = $filters;
+  }
+  
+  // Only perform search if there is non-whitespace search term or filters:
+  if ($keys || $filters) {
+    // Log the search keys:
+    $log = $keys;
+
+    if($filters) {
+      $log .= '?filters='. print_r($filters, true);
+    }
+    watchdog('search', '%keys (@type).', array('%keys' => $log, '@type' => t('Search')), WATCHDOG_NOTICE, l(t('results'), 'search/'. $type .'/'. $keys . (($filters) ? '?filters=' . $filters : '') ));
+
+    // Collect the search results:
+    $results = search_data($data_search, $type);
+    
+    if ($results['total']) {
+      $title = theme('redinmob_search_results_title', t('Results (@posts posts)', array('@posts' => $results['total'])));
+      $results_data = $results['results'];
+    }
+    else {
+      $title = theme('redinmob_search_results_title', t('Your search yielded no results'));
+      $results_data = redinmob_search_noresults();
+    }
+
+    $results = theme('box', $title, $results_data);
+  }
+
+  if (empty($form)) {
+    // The form may be altered based on the query that was run.
+    $form = drupal_get_form('search_form', NULL, $keys, $type);
+  }
+
+  return $form . $results;
+}
+
+/**
+ * Implementation of hook_search_page().
+ *
+ * Needed to theme the results, because of the unusual format send by the module
+ */
+function redinmob_search_search_page($results) {
+  // Change the array of data to a themed version
+  $results['results'] = theme('search_results', $results['results'], 'redinmob-search');
+
+  return $results;
+}
+
+/**
+ * Execute a search results based on keyword, filter, and sort strings.
+ *
+ * @param $keys
+ * @param $filterstring
+ * @param $solrsort
+ * @param $base_path
+ *   For constructing filter and sort links. Leave empty unless the links need to point somewhere
+ *   other than the base path of the current request.
+ * @param integer $page
+ *   For pagination.
+ * @param $caller
+ * @return Apache_Solr_Response $response
+ * @throws Exception
+ */
+function redinmob_search_execute($keys, $filterstring, $solrsort, $base_path = '', $page = 0, $caller = 'redinmob_search') {
+  // This is the object that knows about the query coming from the user.
+  $query = apachesolr_drupal_query($keys, $filterstring, $solrsort, $base_path);
+  
+  if (empty($query)) {
+    throw new Exception(t('Could not construct a Solr query in function redinmob_search_search()'));
+  }
+
+  // Executes the query, with the sole finality of get the total of matched items
+  list($query, $response) = apachesolr_do_query($caller, $query);
+  $return['total'] = $response->response->numFound;
+
+  // Get the results from the search
+  $return['results'] = apachesolr_search_execute($keys, $filterstring, $solrsort, $base_path, $page, $caller);
+
+  // Removes the breadcrumb
+  _redinmob_search_remove_breadcrumb();
+
+  return $return;
+}
+
+/**
+ * Implementation of hook_apachesolr_facets().
+ *
+ * Returns an array keyed by block delta.
+ */
+function redinmob_search_apachesolr_facets() {
+  $facets = array();
+
+  // Get CCK field facets.
+  if($fields = apachesolr_cck_fields()) {
+    foreach ($fields as $name => $field) {
+      // Work only with fields of the desired content type
+      if(!in_array('propiedad', $field['content_types'])){
+        continue;
+      }
+      
+      // If the field says create a facet, create it
+      if (!empty($field['facets'])) {
+        // $delta can only be 32 chars, and the CCK field name may be this
+        // long also, so we cannot add anything to it.
+        $facets[$name] = array(
+          'info' => t('Filter by @field', array('@field' => $field['widget']['label'])),
+          'facet_field' => apachesolr_index_key($field),
+        );
+      }
+    }
+  }
+  
+  return $facets;
+}
+
+/**
+ * Implementation of hook_block().
+ */
+function redinmob_search_block($op = 'list', $delta = 0, $edit = array()) {
+
+  switch ($op) {
+    case 'list':
+      $enabled_facets = apachesolr_get_enabled_facets('redinmob_search');
+      $facets = redinmob_search_apachesolr_facets();
+      
+      // Add the blocks
+      $blocks = array();
+      foreach ($enabled_facets as $delta => $facet_field) {
+        if (isset($facets[$delta])) {
+          $blocks[$delta] = $facets[$delta] + array('cache' => BLOCK_CACHE_PER_ROLE | BLOCK_CACHE_PER_PAGE);
+          $blocks[$delta]['info'] = 'RedInmob Search: ' . $blocks[$delta]['info'];
+        }
+      }
+//      $blocks['currentsearch'] = array(
+//        'info' => t('Apache Solr Search: Current search'),
+//        'cache' => BLOCK_CACHE_PER_PAGE,
+//      );
+      
+      // Add a block for the search form by code
+      $blocks['search_by_code'] = array(
+        'info' => t('RedInmob Search Properties By Code'),
+        'cache' => BLOCK_CACHE_PER_ROLE | BLOCK_CACHE_PER_PAGE,
+      );
+
+      // Add a block for the search form in the selective form
+      $blocks['search_selective'] = array(
+        'info' => t('RedInmob Search Properties'),
+        'cache' => BLOCK_CACHE_PER_ROLE | BLOCK_CACHE_PER_PAGE,
+      );
+
+      return $blocks;
+
+    case 'view':
+      if($delta == 'search_by_code'){
+        $block = array(
+          'subject' => t('Search Properties By Code'),
+          'content' => drupal_get_form('search_form', NULL, NULL, 'redinmob_search', $delta),
+        );
+        
+        return $block;
+      }
+
+      if($delta == 'search_selective'){
+        $block = array(
+          'subject' => t('Search Properties'),
+          'content' => drupal_get_form('search_form', NULL, NULL, 'redinmob_search', $delta),
+        );
+        
+        return $block;
+      }
+      
+      if (apachesolr_has_searched()) {
+        apachesolr_current_namespace('redinmob_search');
+        
+        // Get the query and response. Without these no blocks make sense.
+        $response = apachesolr_static_response_cache();
+        if (empty($response)) {
+          return;
+        }
+        $query = apachesolr_current_query();
+
+        $facets = apachesolr_get_enabled_facets('redinmob_search');
+        if (empty($facets[$delta]) && ($delta != 'currentsearch')) {
+          return;
+        }
+
+//        // Handle taxonomy vocabulary facets
+//        if (strpos($delta, 'im_vid_') === 0) {
+//          return apachesolr_search_taxonomy_facet_block($response, $query, $delta);
+//        }
+
+        switch ($delta) {
+//          case 'currentsearch':
+//            return apachesolr_search_currentsearch_block($response, $query);
+//          case 'is_book_bid':
+//            return apachesolr_facet_block($response, $query, 'apachesolr_search', $delta, $delta, t('Filter by book'), 'apachesolr_search_get_book');
+//          case 'language':
+//            return apachesolr_facet_block($response, $query, 'apachesolr_search', $delta, $delta, t('Filter by language'), 'apachesolr_search_language_name');
+//          case 'uid':
+//            return apachesolr_facet_block($response, $query, 'apachesolr_search', $delta, $delta, t('Filter by author'), 'apachesolr_search_get_username');
+//          case 'type':
+//            return apachesolr_facet_block($response, $query, 'apachesolr_search', $delta, $delta, t('Filter by type'), 'apachesolr_search_get_type');
+//          case 'changed':
+//            return apachesolr_date_facet_block($response, $query, 'apachesolr_search', $delta, $delta, t('Filter by modification date'));
+//          case 'created':
+//            return apachesolr_date_facet_block($response, $query, 'apachesolr_search', $delta, $delta, t('Filter by post date'));
+
+          default:
+            if ($fields = apachesolr_cck_fields()) {
+              foreach ($fields as $name => $field) {
+                if ($field['field_name'] == $delta) {
+                  $index_key = apachesolr_index_key($field);
+                  return _redinmob_search_facet_block($response, $query, 'apachesolr_search', $delta, $index_key, t('Filter by @field', array('@field' => $field['label'])));
+                }
+              }
+            }
+        }
+        break;
+      }
+      break;
+
+//    case 'configure':
+//      if ($delta != 'currentsearch') {
+//        return apachesolr_facetcount_form('apachesolr_search', $delta);
+//      }
+//      break;
+//
+//    case 'save':
+//      if ($delta != 'currentsearch') {
+//        apachesolr_facetcount_save($edit);
+//      }
+//      break;
+  }
+}
+
+///**
+// * Generate a list including the field and all its children.
+// */
+//function apachesolr_search_collect_children($field) {
+//  $remove[] = $field;
+//  if (!empty($field['#children'])) {
+//    foreach ($field['#children'] as $child_field) {
+//      $remove = array_merge($remove, apachesolr_search_collect_children($child_field));
+//    }
+//  }
+//  return $remove;
+//}
+//
+///**
+// * Generate the facet block for a taxonomy vid delta.
+// */
+//function apachesolr_search_taxonomy_facet_block($response, $query, $delta) {
+//  $vid = substr($delta, 7);
+//  if (!module_exists('taxonomy') || !is_numeric($vid)) {
+//    return;
+//  }
+//
+//  // Check that we have a response and a valid vid.
+//  if (is_object($response->facet_counts->facet_fields->$delta) && ($vocab = taxonomy_vocabulary_load($vid))) {
+//    $reflect_hierarchy = apachesolr_search_get_hierarchical_vocabularies();
+//    $contains_active = FALSE;
+//    $facets = array();
+//
+//    foreach ($response->facet_counts->facet_fields->$delta as $tid => $count) {
+//       // TODO - for now we don't handle facet missing.
+//      if ($tid != '_empty_') {
+//        $active = $query->has_filter('tid', $tid);
+//        if ($active) {
+//          $contains_active = TRUE;
+//        }
+//        $facets[$tid] = array(
+//          '#name' => 'tid',
+//          '#value' => $tid,
+//          '#exclude' => FALSE,
+//          '#count' => $count,
+//          '#parent' => 0,
+//          '#children' => array(),
+//          '#has_children' => FALSE,
+//          '#active' => $active,
+//        );
+//      }
+//    }
+//
+//    if ($facets && $reflect_hierarchy[$vocab->vid]) {
+//      $placeholders = db_placeholders($facets);
+//      $tids = array_keys($facets);
+//      // @todo: faster as 2x separate queries?
+//      $result = db_query("SELECT tid, parent FROM {term_hierarchy} WHERE parent > 0 AND (tid IN ($placeholders) OR parent IN ($placeholders))", array_merge($tids, $tids));
+//      while ($term = db_fetch_object($result)) {
+//        // Mark all terms that are parents for later CSS class.
+//        // We assume data in the Solr index is complete - potential for some
+//        // breakage here.
+//        if (isset($facets[$term->parent])) {
+//          $facets[$term->parent]['#has_children'] = TRUE;
+//          if (isset($facets[$term->tid])) {
+//            $facets[$term->tid]['#parent'] = $term->parent;
+//            // Use a reference so we see the updated data.
+//            $facets[$term->parent]['#children'][] = &$facets[$term->tid];
+//          }
+//        }
+//      }
+//
+//      // Check for the case like starting on a taxonomy/term/$tid page
+//      // where parents are not marked as active.
+//      // @todo: can we make this more efficient?
+//      do {
+//        $added_active = FALSE;
+//        foreach ($facets as $tid => $field) {
+//          if ($field['#active'] && $field['#parent'] && !$facets[$field['#parent']]['#active']) {
+//            // This parent has an active child.
+//            $added_active = TRUE;
+//            $query->add_filter('tid', $field['#parent']);
+//            $facets[$field['#parent']]['#active'] = TRUE;
+//          }
+//        }
+//      } while ($added_active);
+//      foreach ($facets as $tid => $field) {
+//        if (!empty($field['#parent'])) {
+//          // We will render it via its parent.
+//          unset($facets[$tid]);
+//        }
+//      }
+//    }
+//
+//    $items = apachesolr_search_nested_facet_items($query, $facets, $response->response->numFound);
+//    // Process all terms into an item list
+//    if ($items && ($response->response->numFound > 1 || $contains_active)) {
+//      $initial_limits = variable_get('apachesolr_facet_query_initial_limits', array());
+//      $limit = isset($initial_limits['apachesolr_search'][$delta]) ? $initial_limits['apachesolr_search'][$delta] : variable_get('apachesolr_facet_query_initial_limit_default', 10);
+//      return array(
+//        'subject' => t('Filter by @field', array('@field' => $vocab->name)),
+//        'content' => theme('apachesolr_facet_list', $items, $limit),
+//      );
+//    }
+//  }
+//}
+//
+///**
+// * Recursive function that returns a nested array of facet values for use with
+// * theme_item_list().
+// *
+// * @param $query
+// *   The current Solr query.
+// * @param $facets
+// *   Array of facet items to prepare for rendering, possibly as nested lists.
+// * @param $num_found
+// *   The number of documents in the current response.
+// * @param $sort
+// *   If true, the returned list will be sorted based on the count of each
+// *   facets, it's text representation and wither it's active.  If false,
+// *   the facets will be returned in the order they were received.
+// */
+//function apachesolr_search_nested_facet_items($query, $facets, $num_found, $sort = TRUE) {
+//  $facet_show_children = variable_get('apachesolr_facet_show_children', array());
+//  $items = array();
+//  foreach ($facets as $field) {
+//    $facet_text = theme('apachesolr_breadcrumb_' . $field['#name'], $field['#value'], $field['#exclude']);
+//    if (!$facet_text) {
+//      $facet_text = $field['#value'];
+//    }
+//
+//    $active = !empty($field['#active']);
+//
+//    $link = array();
+//    $new_query = clone $query;
+//    if ($active) {
+//      foreach (apachesolr_search_collect_children($field) as $child) {
+//        $new_query->remove_filter($child['#name'], $child['#value']);
+//      }
+//      $options['query'] = $new_query->get_url_queryvalues();
+//      $link['data'] = theme('apachesolr_unclick_link', $facet_text, $new_query->get_path(), $options);
+//    }
+//    else {
+//      $new_query->add_filter($field['#name'], $field['#value']);
+//      $options = array('query' => $new_query->get_url_queryvalues());
+//      $link['data'] = theme('apachesolr_facet_link', $facet_text, $new_query->get_path(), $options, $field['#count'], FALSE, $num_found);
+//    }
+//
+//    if ($active) {
+//      // '*' sorts before all numbers.
+//      $sortpre = '*';
+//    }
+//    else {
+//      $sortpre = 1000000 - $field['#count'];
+//    }
+//
+//    // Only display children if the block enables it or the parent is clicked.
+//    if ((isset($facet_show_children['apachesolr_search'][$field_name]) && $facet_show_children['apachesolr_search'][$field_name]) || (!empty($field['#children']) && $field['#active'] == TRUE)) {
+//      $link['children'] = apachesolr_search_nested_facet_items($query, $field['#children'], $num_found, $sort);
+//      $link['class'] = "expanded-facet";
+//    }
+//    elseif (!empty($field['#has_children'])) {
+//      $link['class'] = "collapsed";
+//    }
+//    $items[$sortpre . '*' . $facet_text . $field['#name'] . $field['#value']] = $link;
+//  }
+//
+//  if ($sort && $items) {
+//    ksort($items);
+//  }
+//  return array_values($items);
+//}
+//
+///**
+// * Callback function for the 'Filter by book' facet block.
+// */
+//function apachesolr_search_get_book($facet, &$options) {
+//  if (is_numeric($facet)) {
+//    return db_result(db_query('SELECT title FROM {node} WHERE nid = %d', $facet));
+//  }
+//  else {
+//    $options['html'] = TRUE;
+//    return theme('placeholder', t('Not in any book'));
+//  }
+//}
+//
+//function apachesolr_search_language_name($lang) {
+//  static $list = NULL;
+//
+//  if (!isset($list)) {
+//    if (function_exists('locale_language_list')) {
+//      $list = locale_language_list();
+//    }
+//    $list['und'] = t('Language neutral');
+//  }
+//  return ($lang && isset($list[$lang])) ? $list[$lang] : $lang;
+//}
+//
+///**
+// * Callback function for the 'Filter by name' facet block.
+// */
+//function apachesolr_search_get_username($facet) {
+//  if (is_numeric($facet)) {
+//    return theme('apachesolr_breadcrumb_uid', $facet);
+//  }
+//  return '';
+//}
+//
+///**
+// * Callback function for the 'Filter by type' facet block.
+// */
+//function apachesolr_search_get_type($facet) {
+//  $type = node_get_types('name', $facet);
+//  // A disabled or missing node type returns FALSE.
+//  $name = ($type === FALSE) ? $facet : $type;
+//  return apachesolr_tt("nodetype:type:$facet:name", $name);
+//}
+//
+///**
+// * Implementation of hook_form_[form_id]_alter().
+// *
+// * This adds the 0 option to the search admin form.
+// */
+//function apachesolr_search_form_search_admin_settings_alter(&$form, $form_state) {
+//  $form['indexing_throttle']['search_cron_limit']['#options']['0'] = '0';
+//  ksort($form['indexing_throttle']['search_cron_limit']['#options']);
+//}
+//
+///**
+// * Implementation of hook_form_[form_id]_alter().
+// */
+//function apachesolr_search_form_search_theme_form_alter(&$form, $form_state) {
+//  apachesolr_search_form_search_block_form_alter($form, $form_state);
+//}
+//
+///**
+// * Implementation of hook_form_[form_id]_alter().
+// */
+//function apachesolr_search_form_search_block_form_alter(&$form, $form_state) {
+//  if (variable_get('apachesolr_search_make_default', 0)) {
+//    $item = menu_get_item();
+//    // Avoid double searches when already on a search page.
+//    if ($item['path'] == 'search/apachesolr_search/%') {
+//      $form['#action'] = url('search/apachesolr_search');
+//    }
+//    if (!isset($form['#submit'])) {
+//      $form['#submit'] = array('apachesolr_search_search_box_form_submit');
+//    }
+//    else {
+//      $key = array_search('search_box_form_submit', $form['#submit']);
+//      if ($key !== FALSE) {
+//        // Replace the search module's function.
+//        $form['#submit'][$key] = 'apachesolr_search_search_box_form_submit';
+//      }
+//    }
+//  }
+//}
+//
+///**
+// * Process a block search form submission.
+// *
+// * @see search_box_form_submit()
+// */
+//function apachesolr_search_search_box_form_submit($form, &$form_state) {
+//  // The search form relies on control of the redirect destination for its
+//  // functionality, so we override any static destination set in the request,
+//  // for example by drupal_access_denied() or drupal_not_found()
+//  // (see http://drupal.org/node/292565).
+//  if (isset($_REQUEST['destination'])) {
+//    unset($_REQUEST['destination']);
+//  }
+//  if (isset($_REQUEST['edit']['destination'])) {
+//    unset($_REQUEST['edit']['destination']);
+//  }
+//
+//  $form_id = $form['form_id']['#value'];
+//  $keys = $form_state['values'][$form_id];
+//  // Handle Apache webserver clean URL quirks.
+//  if (variable_get('clean_url', '0')) {
+//    $keys = str_replace('+', '%2B', $keys);
+//  }
+//  $form_state['redirect'] = 'search/apachesolr_search/'. trim($keys);
+//}
+
+/**
+ * Implementation of hook_form_[form_id]_alter().
+ */
+function redinmob_search_form_search_form_alter(&$form, $form_state) {
+  // Guarantee that the form alteration will occur only if the search has been
+  // performed by the correct module
+  if($form['module']['#value'] != 'redinmob_search'){
+    return;
+  }
+  
+  // The form is not displayed if there is more arguments in the URL or there's
+  // a filters argument (that is used as an indicator of a submitted search)
+  $path = explode('/', $_GET['q'], 3);
+  if(isset($path[2]) || isset($_GET['filters'])){
+    $form['#access'] = false;
+  }
+
+  unset($form['basic']['#title']);
+  
+  $form['submit'] = $form['basic']['inline']['submit'];
+  unset($form['basic']['inline']['submit']);
+
+  // Loads all cck fields
+  $fields = apachesolr_cck_fields();
+
+  // Load info from correspondant field (field_codigo)
+  $cck_field_name = 'field_codigo';
+  
+  $field_name = apachesolr_index_key($fields[$cck_field_name]);
+
+  if($field_name){
+    // Prevent field display when that one has been deactivated for indexation
+    $form['basic'][$field_name] = array(
+      '#type' => 'textfield',
+      '#title' => $fields[$cck_field_name]['widget']['label'],
+      '#size' => 40,
+      '#prefix' => '<div class="by-code-group">',
+      '#suffix' => '</div>',
+    );
+  }
+
+  // Creation of the main group
+  $form['basic']['main_group'] = array(
+    '#type' => 'fieldset',
+  );
+  
+  // Load info from correspondant field (field_tipo_propiedad)
+  $cck_field_name = 'field_tipo_propiedad';
+  
+  $field_name = apachesolr_index_key($fields[$cck_field_name]);
+  $allowed_values = content_taxonomy_allowed_values($fields[$cck_field_name]);
+  // Standardized the message when no item is selected
+  if(isset($allowed_values[''])){
+    $allowed_values[''] = t('- Select -');
+  }
+
+  if($field_name && $allowed_values){
+    // Prevent field display when that one has been deactivated for indexation
+    $form['basic']['main_group'][$field_name] = array(
+      '#type' => 'select',
+      '#title' => $fields[$cck_field_name]['widget']['label'],
+      '#options' => $allowed_values,
+    );
+  }
+  
+  // Load info from correspondant field (field_finalidad)
+  $cck_field_name = 'field_finalidad';
+  
+  $field_name = apachesolr_index_key($fields[$cck_field_name]);
+  $allowed_values = content_allowed_values($fields[$cck_field_name]);
+
+  if($field_name && $allowed_values){
+    // Prevent field display when that one has been deactivated for indexation
+    $form['basic']['main_group'][$field_name] = array(
+      '#type' => 'select',
+      '#title' => $fields[$cck_field_name]['widget']['label'],
+      '#options' => $allowed_values,
+    );
+  }
+
+  // Load info from correspondant field (field_estado)
+  $cck_field_name = 'field_estado';
+  
+  $field_name = apachesolr_index_key($fields[$cck_field_name]);
+  $allowed_values = content_allowed_values($fields[$cck_field_name]);
+
+  if($field_name && $allowed_values){
+    // Prevent field display when that one has been deactivated for indexation
+    $form['basic']['main_group'][$field_name] = array(
+      '#type' => 'select',
+      '#title' => $fields[$cck_field_name]['widget']['label'],
+      '#options' => $allowed_values,
+    );
+  }
+  
+  // Load info from correspondant field (field_dormitorios)
+  $cck_field_name = 'field_dormitorios';
+  
+  $field_name = apachesolr_index_key($fields[$cck_field_name]);
+  $allowed_values = content_allowed_values($fields[$cck_field_name]);
+
+  if($field_name && $allowed_values){
+    // Prevent field display when that one has been deactivated for indexation
+    $form['basic']['main_group'][$field_name] = array(
+      '#type' => 'select',
+      '#title' => $fields[$cck_field_name]['widget']['label'],
+      '#options' => $allowed_values,
+    );
+  }
+  
+  // Load info from correspondant field (field_ciudad_sector)
+  $cck_field_name = 'field_ciudad_sector';
+  
+  $field_name = apachesolr_index_key($fields[$cck_field_name]);
+
+  if($field_name && $allowed_values){
+    // Prevent field display when that one has been deactivated for indexation
+    $form['basic']['main_group'][$field_name] = array(
+      '#type' => 'hierarchical_select',
+      '#title' => $fields[$cck_field_name]['widget']['label'],
+      '#size' => 1,
+      '#config' => array(
+        'module' => 'hs_taxonomy',
+        'params' => array(
+          'vid' => $fields[$cck_field_name]['vid'],
+        ),
+        'save_lineage'    => 1,
+        'enforce_deepest' => 1,
+        'resizable'       => 0,
+      ),
+      '#attributes' => array(
+        'class' => 'ciudad-sector',
+      ),
+    );
+  }
+  
+  // Load and build price ranges from db
+  $options = array();
+  
+  // Tells what to obtain from the search
+  $params = array(
+    'fl' => 'fs_cck_field_precio',
+    'rows' => 1,
+  );
+  
+  // Build the query to obtain the min data form the server
+  $max = 0;
+  $query = apachesolr_drupal_query('', '');
+  
+  if(!empty($query)) {
+    $params['sort'] = 'fs_cck_field_precio desc';
+    
+    // Executes the query
+    list($query, $response) = apachesolr_do_query(__FUNCTION__, $query, $params);
+    
+    // Get the value from response
+    $max = $response->response->docs[0]->fs_cck_field_precio;
+  }
+  
+  // Build the query to obtain the max data form the server
+  $min = 0;
+  $query = apachesolr_drupal_query('', '');
+  
+  if(!empty($query)) {
+    $params['sort'] = 'fs_cck_field_precio asc';
+    
+    // Executes the query
+    list($query, $response) = apachesolr_do_query(__FUNCTION__, $query, $params);
+    
+    // Get the value from response
+    $min = $response->response->docs[0]->fs_cck_field_precio;    
+  }
+  
+  // In case max is bigger than min, create data ranges
+  if($max >= $min){
+    $ranges = 10;
+    $delta = floor(($max - $min) / $ranges);
+    $value = $min;
+    
+    while($value < $max){
+      $new_value = $value + $delta;
+      if($new_value > $max){
+        $new_value = $max;
+      }
+      
+      $options[$value . '-' . $new_value] = format_number($value, -1) . ' - ' . format_number($new_value, -1);
+      $value = $new_value;
+    }
+  }
+  
+  $form['basic']['main_group']['precio'] = array(
+    '#type' => 'select',
+    '#title' => 'Precio',
+    '#options' => $options,
+  );  
+  
+  // Add a custom submit function
+  $form['#submit'] = array('redinmob_search_search_form_submit');
+  
+  // Set a function to do some after_build processing, to include some necessary
+  // options in the select fields for the search form
+  $form['#after_build'][] = '_redinmob_search_process_selects';
+
+  // In case the form has been requested to be presented as a block, do some
+  // adjustments
+  if(isset($form['#parameters'][5])){
+    unset($form['#access']);
+    unset($form['basic']['inline']['keys']);
+    
+    switch ($form['#parameters'][5]) {
+      case 'search_selective':
+        unset($form['basic']['ss_cck_field_codigo']);
+        
+        $form['basic']['main_group']['submit'] = $form['submit'];
+        unset($form['submit']);
+
+        break;
+
+      case 'search_by_code':
+        unset($form['basic']['main_group']);
+
+        break;
+    }
+  }  
+}
+
+/**
+ * Function to add empty options for the selects displayed in the search form
+ */
+function _redinmob_search_process_selects($form, $form_state){
+  // Add an empty option to each select that doesn't have one
+  if($item = &$form['basic']['main_group']['ss_cck_field_tipo_propiedad']){
+    $empty_item[''] = t('- Property @text -', array('@text' => $item['#title']));
+    $item['#options'] = $empty_item + $item['#options'];
+  }
+  
+  if($item = &$form['basic']['main_group']['ss_cck_field_finalidad']){
+    $empty_item[''] = t('- Property @text -', array('@text' => $item['#title']));
+    $item['#options'] = $empty_item + $item['#options'];
+  }
+
+  if($item = &$form['basic']['main_group']['ss_cck_field_estado']){
+    $empty_item[''] = t('- Property @text -', array('@text' => $item['#title']));
+    $item['#options'] = $empty_item + $item['#options'];
+  }
+  
+  if($item = &$form['basic']['main_group']['ss_cck_field_dormitorios']){
+    $empty_item[''] = t('- Number of rooms -', array('@text' => $item['#title']));
+    $item['#options'] = $empty_item + $item['#options'];
+  }
+  
+  if($item = &$form['basic']['main_group']['precio']){
+    $empty_item[''] = t(' - Price -', array('@text' => $item['#title']));
+    $item['#options'] = $empty_item + $item['#options'];
+  }   
+  
+  return $form;
+}
+
+/**
+ * Implementation of hook_apachesolr_search_result_alter
+ */
+function redinmob_search_apachesolr_search_result_alter(&$doc){
+  // Load the node related with the doc retrieved, if possible
+  if($doc->type == 'propiedad' && $doc->nid && ($node = node_load($doc->nid))){
+    $doc->node = $node;
+  }  
+}
+
+///**
+// * Added form submit function to account for Apache mode_rewrite quirks.
+// *
+// * @see apachesolr_search_form_search_form_alter()
+// */
+//function apachesolr_search_form_search_submit($form, &$form_state) {
+//  $fv = $form_state['values'];
+//  $keys = $fv['processed_keys'];
+//  $base = 'search/'. $fv['module'] . '/';
+//  if (variable_get('clean_url', '0')) {
+//    $keys = str_replace('+', '%2B', $keys);
+//  }
+//  $get = json_decode($fv['apachesolr_search']['get'], TRUE);
+//  $queryvalues = json_decode($fv['apachesolr_search']['queryvalues'], TRUE);
+//  if (!empty($fv['apachesolr_search']['retain-filters']) && $queryvalues) {
+//    $get = $queryvalues + $get;
+//    $get['retain-filters'] = '1';
+//  }
+//  $form_state['redirect'] = array($base . $keys, $get);
+//  if ($keys == '' && !$queryvalues) {
+//    form_set_error('keys', t('Please enter some keywords.'));
+//  }
+//}
+//
+///**
+// * Implementation of hook_form_[form_id]_alter().
+// *
+// * This adds options to the apachesolr admin form.
+// */
+//function apachesolr_search_form_apachesolr_settings_alter(&$form, $form_state) {
+//  $form['advanced']['apachesolr_search_make_default'] = array(
+//    '#type' => 'radios',
+//    '#title' => t('Make Apache Solr Search the default'),
+//    '#default_value' => variable_get('apachesolr_search_make_default', 0),
+//    '#options' => array(0 => t('Disabled'), 1 => t('Enabled')),
+//    '#description' => t('Hides core node search, and makes the search block submit to Apache Solr Search'),
+//  );
+//  $form['advanced']['apachesolr_search_default_previous'] = array(
+//    '#type' => 'value',
+//    '#value' => variable_get('apachesolr_search_make_default', 0),
+//  );
+//  $form['advanced']['apachesolr_search_taxonomy_links'] = array(
+//    '#type' => 'radios',
+//    '#title' => t('Use Apache Solr for taxonomy links'),
+//    '#default_value' => variable_get('apachesolr_search_taxonomy_links', 0),
+//    '#description' => t('Note: Vocabularies that need this behavior need to be checked off on the <a href="@enabled_filters_url">enabled filters</a> settings page. Note that content types ommitted from the Apache Solr index will not be shown.', array('@enabled_filters_url' => url('admin/settings/apachesolr/enabled-filters'))),
+//    '#options' => array(0 => t('Disabled'), 1 => t('Enabled')),
+//  );
+//  $form['advanced']['apachesolr_search_taxonomy_previous'] = array(
+//    '#type' => 'value',
+//    '#value' => variable_get('apachesolr_search_taxonomy_links', 0),
+//  );
+//
+//  $form['apachesolr_search_spellcheck'] = array(
+//    '#type' => 'checkbox',
+//    '#title' => t('Enable spellchecker and suggestions'),
+//    '#default_value' => variable_get('apachesolr_search_spellcheck', FALSE),
+//    '#description' => t('Enable spellchecker and get word suggestions. Also known as the "Did you mean ... ?" feature.'),
+//  );
+//
+//  $form['#submit'][] = 'apachesolr_search_build_spellcheck';
+//  $form['#submit'][] = 'apachesolr_search_make_default_submit';
+//  // Move buttons to the bottom.
+//  $buttons = $form['buttons'];
+//  unset($form['buttons']);
+//  $form['buttons'] = $buttons;
+//}
+//
+///**
+// * Form submit funtion - do a menu rebuild if needed.
+// *
+// * @see apachesolr_search_form_apachesolr_settings_alter()
+// */
+//function apachesolr_search_make_default_submit($form, &$form_state) {
+//  // We use variable_get() instead of the form values so as to also handle reset to defaults.
+//  if ($form_state['values']['apachesolr_search_default_previous'] != variable_get('apachesolr_search_make_default', 0) ||
+//      $form_state['values']['apachesolr_search_taxonomy_previous'] != variable_get('apachesolr_search_taxonomy_links', 0)) {
+//    // Take account of path changes
+//    menu_rebuild();
+//  }
+//}
+//
+///**
+// * Implementation of hook_form_[form_id]_alter().
+// *
+// * Rebuild (empty) the spellcheck dictionary when the index is deleted..
+// */
+//function apachesolr_search_form_apachesolr_delete_index_form_alter(&$form, $form_state) {
+//  $form['submit']['#submit'][] = 'apachesolr_search_build_spellcheck';
+//}
+//
+//function apachesolr_search_build_spellcheck() {
+//  try {
+//    $solr = apachesolr_get_solr();
+//    $params['spellcheck'] = 'true';
+//    $params['spellcheck.build'] = 'true';
+//    $response = $solr->search('solr', 0, 0, $params);
+//  }
+//  catch (Exception $e) {
+//    watchdog('Apache Solr', nl2br(check_plain($e->getMessage())), NULL, WATCHDOG_ERROR);
+//  }
+//}
+
+/**
+ * Implementation of hook_theme().
+ */
+function redinmob_search_theme($existing, $type, $theme, $path) {
+  return array(
+    'redinmob_search_results_title' => array(
+      'arguments' => array(
+        'title' => NULL,
+      ),
+    ),
+
+    'redinmob_search_get_search_path' => array(
+      'arguments' => array(
+        'option' => NULL,
+        'default' => NULL,
+      ),
+    ),
+      
+//    'apachesolr_facet_link' => array(
+//      'arguments' => array(
+//        'facet_text' => NULL, 
+//        'path' => NULL, 
+//        'options' => NULL, 
+//        'count' => NULL, 
+//        'active' => FALSE, 
+//        'num_found' => NULL,
+//      ),
+//    ),
+//    'apachesolr_unclick_link' => array(
+//      'arguments' => array(
+//        'facet_text' => NULL, 
+//        'path' => NULL, 
+//        'options' => NULL,
+//      ),
+//    ),
+  );  
+  
+//  return array(
+//    'apachesolr_breadcrumb_is_book_bid' => array(
+//      'arguments' => array('bid' => NULL, 'exclude' => FALSE),
+//    ),
+//    'apachesolr_breadcrumb_uid' => array(
+//      'arguments' => array('uid' => NULL, 'exclude' => FALSE),
+//    ),
+//    'apachesolr_breadcrumb_tid' => array(
+//      'arguments' => array('tid' => NULL, 'exclude' => FALSE),
+//    ),
+//    'apachesolr_breadcrumb_type' => array(
+//      'arguments' => array('type' => NULL, 'exclude' => FALSE),
+//    ),
+//    'apachesolr_breadcrumb_language' => array(
+//      'arguments' => array('lang' => NULL, 'exclude' => FALSE),
+//    ),
+//    'apachesolr_breadcrumb_changed' => array(
+//      'arguments' => array('type' => NULL),
+//    ),
+//    'apachesolr_breadcrumb_created' => array(
+//      'arguments' => array('type' => NULL),
+//    ),
+//    'apachesolr_currentsearch' => array(
+//      'arguments' => array('total_found' => NULL, 'links' => NULL),
+//    ),
+//    'apachesolr_search_snippets' => array(
+//      'arguments' => array('doc' => NULL, 'snippets' => NULL),
+//    ),
+//  );
+}
+
+/**
+ * Implementation of hook_theme_registry_alter().
+ */
+function redinmob_search_theme_registry_alter(&$theme_registry) {
+  // Change the functions that handle the apachesolr facet links generated
+  if($item = &$theme_registry['apachesolr_facet_link']){
+    $item['function'] = 'redinmob_search_facet_link_theme';
+  }
+  
+  if($item = &$theme_registry['apachesolr_unclick_link']){
+    $item['function'] = 'redinmob_search_unclick_link_theme';
+  }  
+}
+
+//function theme_apachesolr_breadcrumb_language($lang, $exclude = FALSE) {
+//  return apachesolr_search_language_name($lang);
+//}
+//
+///**
+// * Proxy theme function for 'created' and 'changed' date fields.
+// */
+//function theme_apachesolr_breadcrumb_date_range($range) {
+//  if (preg_match('@[\[\{](\S+) TO (\S+)[\]\}]@', $range, $match)) {
+//    return apachesolr_date_format_range($match[1], $match[2]);
+//  }
+//  return $range;
+//}
+//
+//function theme_apachesolr_breadcrumb_changed($range) {
+//  return theme_apachesolr_breadcrumb_date_range($range);
+//}
+//
+//function theme_apachesolr_breadcrumb_created($range) {
+//  return theme_apachesolr_breadcrumb_date_range($range);
+//}
+//
+///**
+// * Return the username from $uid
+// */
+//function theme_apachesolr_breadcrumb_uid($uid) {
+//  if ($uid == 0) {
+//    return variable_get('anonymous', t('Anonymous'));
+//  }
+//  else {
+//    return db_result(db_query("SELECT name FROM {users} WHERE uid = %d", $uid));
+//  }
+//}
+//
+///**
+// * Return the term name from $tid, or $tid as a fallback.
+// */
+//function theme_apachesolr_breadcrumb_tid($tid) {
+//  if (function_exists('taxonomy_get_term')) {
+//    if ($term = taxonomy_get_term($tid)) {
+//      return $term->name;
+//    }
+//  }
+//  return $tid;
+//}
+//
+///**
+// * Return the human readable text for a content type.
+// */
+//function theme_apachesolr_breadcrumb_type($type) {
+//  $name = node_get_types('name', $type);
+//  return apachesolr_tt("nodetype:type:$type:name", $name);
+//}
+//
+///**
+// * Return the title of a book.
+// */
+//function theme_apachesolr_breadcrumb_is_book_bid($bid) {
+//  if (is_numeric($bid)) {
+//    return db_result(db_query('SELECT title FROM {node} WHERE nid = %d', $bid));
+//  }
+//  else {
+//    return t('Not in any book');
+//  }
+//}
+//
+///**
+// * Return current search block contents
+// */
+//function theme_apachesolr_currentsearch($total_found, $links) {
+//  return theme_item_list($links, format_plural($total_found, 'Search found 1 item', 'Search found @count items'));
+//}
+//
+///**
+// * Theme the highlighted snippet text for a search entry.
+// *
+// * @param object $doc
+// * @param array $snippets
+// *
+// */
+//function theme_apachesolr_search_snippets($doc, $snippets) {
+//  return implode(' ... ', $snippets) .' ...';
+//}
+//
+//function apachesolr_get_parent_terms($tids) {
+//  // Find the starting tid terms and then all their parents.
+//  $parent_terms = array();
+//  $new_tids = $tids;
+//  do {
+//    $result = db_query(db_rewrite_sql("SELECT t.tid, t.parent FROM {term_hierarchy} t WHERE t.tid IN (". db_placeholders($new_tids) .")", 't', 'tid'), $new_tids);
+//    $new_tids = array();
+//    while ($term = db_fetch_object($result)) {
+//      $parent_terms[$term->tid] = $term;
+//      if ($term->parent > 0) {
+//        $new_tids[] = $term->parent;
+//      }
+//    }
+//  } while ($new_tids);
+//  return $parent_terms;
+//}
+//
+///**
+// * Return the contents of the "Current search" block.
+// *
+// * @param $response
+// *   The Solr response object.
+// * @param $query
+// *   The Solr query object.
+// */
+//function apachesolr_search_currentsearch_block($response, $query) {
+//  $fields = $query->get_filters();
+//  $links = array();
+//  $facets = array();
+//
+//  // If current search has keys, offer current search without them
+//  if ($keys = $query->get_query_basic()) {
+//    $links[] = theme('apachesolr_unclick_link', $keys, $query->get_path(''), array('query' => $query->get_url_queryvalues()));
+//  }
+//  // Find all taxonomy terms to be treated in a hierarchy.
+//  if (module_exists('taxonomy')) {
+//    $reflect_hierarchy = apachesolr_search_get_hierarchical_vocabularies();
+//    $facets = array();
+//    foreach ($fields as $index => $field) {
+//      if ($field['#name'] && 'tid' == $field['#name']) {
+//        $term = taxonomy_get_term($field['#value']);
+//        if ($reflect_hierarchy[$term->vid]) {
+//          $fields[$index] += array('#parent' => 0, '#children' => array());
+//          // Just save the index for later lookup.
+//          $facets[$term->tid] = $index;
+//        }
+//      }
+//    }
+//    if ($facets) {
+//      // Get all term hierarchy information.
+//      $all_terms = apachesolr_get_parent_terms(array_keys($facets));
+//      foreach ($all_terms as $tid => $term) {
+//        if (!isset($facets[$tid])) {
+//          // This is a parent that is missing from the query.  E.g. we started
+//          // on a taxonomy/term/$tid page.
+//          $query->add_filter('tid', $tid);
+//          // Ordering is wonky, but oh well...
+//          $fields[] = array('#name' => 'tid', '#value' => $tid, '#exclude' => FALSE, '#parent' => 0, '#children' => array());
+//          // Get the index of the newly added facet.
+//          end($fields);
+//          $facets[$tid] = key($fields);
+//        }
+//      }
+//      foreach ($all_terms as $tid => $term) {
+//        $index = $facets[$term->tid];
+//        if (isset($facets[$term->parent])) {
+//          // Use a reference so we see the updated data.
+//          $fields[$facets[$term->parent]]['#children'][] = &$fields[$index];
+//          $fields[$index]['#parent'] = $term->parent;
+//        }
+//      }
+//    }
+//  }
+//
+//  // We don't directly render any items with a parent.
+//  foreach ($fields as $index => $field) {
+//    $fields[$index]['#active'] = TRUE;
+//    if (!empty($fields[$index]['#parent']) || !$field['#name']) {
+//      // We will render it via its parent.
+//      unset($fields[$index]);
+//    }
+//  }
+//
+//  $links = array_merge($links, apachesolr_search_nested_facet_items($query, $fields, $response->response->numFound, FALSE));
+//  if ($links) {
+//    $content = theme('apachesolr_currentsearch', $response->response->numFound, $links);
+//    return array('subject' => t('Current search'), 'content' => $content);
+//  }
+//}
+//
+///**
+// * Return an array of taxonomy facets that should be displayed hierarchically.
+// */
+//function apachesolr_search_get_hierarchical_vocabularies() {
+//  static $result;
+//
+//  if (!isset($result)) {
+//    $result = array();
+//    if (function_exists('taxonomy_get_vocabularies')) {
+//      $vocabularies = taxonomy_get_vocabularies();
+//      $force_flat = variable_get('apachesolr_search_force_flat_vocabularies', array());
+//      foreach ($vocabularies as $voc) {
+//        // If the vocabulary is not multiple-parent hierarchical and not
+//        // freetagging and not designated to be forced to display flat.
+//        if ($voc->hierarchy != 2 && $voc->tags != 1 && empty($force_flat[$voc->vid])) {
+//          $result[$voc->vid] = 1;
+//        }
+//      }
+//    }
+//  }
+//
+//  return $result;
+//}
+
+/////////////
+// HELPERS //
+/////////////
+
+/**
+ * Function that removes the breadcrumb
+ */
+function _redinmob_search_remove_breadcrumb(){
+  drupal_set_breadcrumb(array());
+}
+
+/**
+ * Function to do the theming of the title of the results search page
+ */
+function theme_redinmob_search_results_title($title = NULL) {
+  return "<div>$title</div>";
+}
+
+/**
+ * Function to do the theming of a facet link
+ */
+function redinmob_search_facet_link_theme($facet_text, $path, $options = array(), $count, $active = FALSE, $num_found = NULL) {
+  // Add special behaviors via js
+  drupal_add_js(drupal_get_path('module', 'redinmob_search') . '/js/redinmob_search.js', 'module');
+
+  if($options['query']['filters']){
+    // Encode filters data, to make it easily transportable between search stages
+    $options['query']['filters'] = base64_encode($options['query']['filters']);
+  }
+  
+  $options['attributes']['class'][] = 'apachesolr-facet';
+  if ($active) {
+    $options['attributes']['class'][] = 'active';
+  }
+  $options['attributes']['class'] = implode(' ', $options['attributes']['class']);
+  return apachesolr_l($facet_text ." ($count)",  $path, $options);
+}
+
+/**
+ * Function to do the theming of a facet unclick link
+ */
+function redinmob_search_unclick_link_theme($facet_text, $path, $options = array()) {
+  // Add special behaviors via js
+  drupal_add_js(drupal_get_path('module', 'redinmob_search') . '/js/redinmob_search.js', 'module');
+
+  if($options['query']['filters']){
+    // Encode filters data, to make it easily transportable between search stages
+    $options['query']['filters'] = base64_encode($options['query']['filters']);
+  }  
+  
+  // Add the number of items next to the facet
+  //$facet_text .= " (" . $vars['count'] . ")";  
+  
+  if (empty($options['html'])) {
+    $facet_text = check_plain(html_entity_decode($facet_text));
+  }
+  else {
+    // Don't pass this option as TRUE into apachesolr_l().
+    unset($options['html']);
+  }
+  $options['attributes']['class'] = 'apachesolr-unclick';
+  return apachesolr_l("(-)", $path, $options) . ' '. $facet_text;
+}
+
+/**
+ * Function to display information when no results are displayed
+ */
+function redinmob_search_noresults() {
+      return t('<ul>
+<li>Check if your spelling is correct, or try removing filters.</li>
+<li>Remove quotes around phrases to match each word individually: <em>"blue drop"</em> will match less than <em>blue drop</em>.</li>
+<li>You can require or exclude terms using + and -: <em>big +blue drop</em> will require a match on <em>blue</em> while <em>big blue -drop</em> will exclude results that contain <em>drop</em>.</li>
+</ul>');
+}
+
+/**
+ * Function to extract the information from content_taxonomy fields using the
+ * widget content_taxonomy_select
+ */
+function _redinmob_search_apachesolr_cck_content_taxonomy_content_taxonomy_select($node, $key){
+  // Store the correct values for this field
+  $term = taxonomy_get_term($node->{$key}[0]['value']);
+  
+  if($term){
+    return array(array('value' => $term->name));
+  }
+}
+
+/**
+ * Function to extract the information from content_taxonomy fields using the
+ * widget content_taxonomy_select
+ */
+function _carajo($node, $key){
+  $a = 0;
+  return 1;
+}
+
+/**
+ * Function to extract the information from content_taxonomy fields using the
+ * widget content_taxonomy_hs
+ */
+function _redinmob_search_apachesolr_cck_content_taxonomy_content_taxonomy_hs($node, $key){
+  $array = array();
+  
+  // Store the correct values for this field
+  foreach ($node->{$key} as $value) {
+    $term = taxonomy_get_term($value['value']);
+
+    if($term){
+      $array[] = array('value' => $term->name); ;
+    }
+  }
+  
+  return $array;
+}
+
+/**
+ * Custom submit function for the customized search form
+ */
+function redinmob_search_search_form_submit($form, &$form_state) {
+  // Load the values in another array, and removes unneccessary data
+  $fv = $form_state['values'];
+  unset(
+    $fv['module'],
+    $fv['keys'],
+    $fv['processed_keys'],
+    $fv['form_build_id'],
+    $fv['form_token'],
+    $fv['form_id'],
+    $fv['op'],
+    $fv['submit'],
+    $fv['hs_form_build_id']
+  );
+  
+  // Transform the array of values into a filterstring
+  $filterstring = '';
+  
+  foreach ($fv as $key => $value) {
+    if(empty($value)){
+      continue;
+    }
+
+    // Do the mapping and fields processed
+    $key_processed = '';
+    $value_processed = '';
+    $complex_data = '';
+    
+    switch ($key) {
+      case 'ss_cck_field_tipo_propiedad':
+        if($value){
+          $key_processed = $key;
+          
+          $term = taxonomy_get_term($value);
+          $value_processed = $term->name;
+        }
+        
+        break;
+      
+      case 'ss_cck_field_dormitorios':
+        $key_processed = $key;
+
+        $allowed_values = content_allowed_values(content_fields('field_dormitorios'));
+        $value_processed = $allowed_values[$value];
+        
+        break;      
+
+      case 'sm_cck_field_ciudad_sector':
+        // Loop through the values
+        foreach ($value as $item) {
+          $term = taxonomy_get_term($item);
+
+          if($term){
+            if($complex_data){
+              $complex_data .= ' ';
+            }
+
+            $complex_data .= $key . ':"' . $term->name . '"';
+          }
+        }        
+        
+        break;
+
+      default:
+        $key_processed = $key;
+        $value_processed = $value;
+
+        break;
+    }
+    
+    if(($key_processed && $value_processed) || $complex_data){
+      if($filterstring!=''){
+        $filterstring.=' ';
+      }
+
+      if($key_processed && $value_processed){
+        $filterstring .= $key_processed . ':"' . $value_processed . '"';
+      } elseif($complex_data){
+        $filterstring .= $complex_data;
+      }
+    }
+  } 
+  
+  if(empty($form_state['values']['keys']) && $filterstring==''){
+    form_set_error('basic', t('Please, specify some criteria to do the search.'));
+
+    return;
+  }
+
+  // Set the parts for the redirection
+  $keys = $form_state['values']['keys'];
+  $base = 'search/' . $form_state['values']['module'] . '/' . $keys;
+  $filters = array();
+
+  // Encode filters data, to make it easily transportable between search stages
+  if($filterstring!=''){
+    $filters['filters'] = base64_encode($filterstring);
+  }
+
+  $form_state['redirect'] = array($base, $filters);
+}
+
+/**
+ * Helper function for displaying a facet block. Code taken from apachesolr_facet_block
+ * and adapted to remove the ordering implemented there
+ */
+function _redinmob_search_facet_block($response, $query, $module, $delta, $facet_field, $filter_by, $facet_callback = FALSE) {
+  if (!empty($response->facet_counts->facet_fields->$facet_field)) {
+    $contains_active = FALSE;
+    $items = array();
+    foreach ($response->facet_counts->facet_fields->$facet_field as $facet => $count) {
+      $options = array();
+      $exclude = FALSE;
+
+      // Solr sends this back if it's empty.
+      if ($facet == '_empty_') {
+        $exclude = TRUE;
+        $facet = '[* TO *]';
+        $options['html'] = TRUE;
+      }
+
+      if ($facet_callback && function_exists($facet_callback)) {
+        $facet_text = $facet_callback($facet, $options);
+      }
+      elseif ($exclude) {
+        $facet_text = theme('placeholder', t('Missing this field'));
+      }
+      else {
+        $facet_text = $facet;
+      }
+
+      $active = $query->has_filter($facet_field, $facet);
+
+      $new_query = clone $query;
+      if ($active) {
+        $contains_active = TRUE;
+        $new_query->remove_filter($facet_field, $facet);
+        $options['query'] = $new_query->get_url_queryvalues();
+        $link = theme('apachesolr_unclick_link', $facet_text, $new_query->get_path(), $options, $count);
+      }
+      else {
+        $new_query->add_filter($facet_field, $facet, $exclude);
+        $options['query'] = $new_query->get_url_queryvalues();
+        $link = theme('apachesolr_facet_link', $facet_text, $new_query->get_path(), $options, $count, FALSE, $response->response->numFound);
+      }
+
+      if ($count || $active) {
+        $items[] = $link;
+      }
+    }
+    // Unless a facet is active only display 2 or more.
+    if ($items && ($response->response->numFound > 1 || $contains_active)) {
+      // Get information needed by the rest of the blocks about limits.
+      $initial_limits = variable_get('apachesolr_facet_query_initial_limits', array());
+      $limit = isset($initial_limits[$module][$delta]) ? $initial_limits[$module][$delta] : variable_get('apachesolr_facet_query_initial_limit_default', 10);
+      $output = theme('apachesolr_facet_list', $items, $limit);
+      return array('subject' => $filter_by, 'content' => $output);
+    }
+  }
+  return NULL;
+}
+
+/**
+ * Theme function used to build search urls
+ *
+ * @param type $option Key used in the creation of the path
+ * @param type $default Default value to be returned in case the custom url
+ * can't be build
+ */
+function theme_redinmob_search_get_search_path($option, $default = '') {
+  // Get info about the apachesolr fields supported
+  $apachesolr_fields = apachesolr_cck_fields();
+  
+  switch ($option) {
+    case 'propiedades-en-venta':
+      $field_name = apachesolr_index_key($apachesolr_fields['field_finalidad']);
+      $allowed_values = content_allowed_values($apachesolr_fields['field_finalidad']);
+      $options = array(
+        'absolute' => true,
+        'query' => array(
+          'filters' => base64_encode($field_name . ':' . $allowed_values['Venta']),
+          'page-title' => 'En Venta',
+        ),
+      );
+      
+      return url('search/redinmob_search', $options);
+
+    case 'propiedades-en-alquiler':
+      $field_name = apachesolr_index_key($apachesolr_fields['field_finalidad']);
+      $allowed_values = content_allowed_values($apachesolr_fields['field_finalidad']);
+      $options = array(
+        'absolute' => true,
+        'query' => array(
+          'filters' => base64_encode($field_name . ':' . $allowed_values['Arriendo']),
+          'page-title' => 'En Alquiler',
+        ),
+      );
+      
+      return url('search/redinmob_search', $options);
+  }  
+  
+  return $default;  
+}

@@ -1,0 +1,6 @@
+; $Id:  $
+name = Redinmob API
+description = General utility functions to be used across all the Redinmobiliaria Site
+
+package = RedInmobiliaria
+core = "6.x"
